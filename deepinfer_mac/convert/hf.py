@@ -29,8 +29,8 @@ def url(path: str, repo: str = REPO) -> str:
     return f"{ENDPOINT}/{repo}/resolve/main/{path}"
 
 
-PIECE = 64 << 20  # one HTTP request; long single transfers occasionally stall on the CDN
-MIN_RATE = 512 << 10  # bytes/s; a request slower than this (after a grace period) is retried
+PIECE = 32 << 20  # one HTTP request; long single transfers occasionally stall on the CDN
+MIN_RATE = 100 << 10  # bytes/s: only truly stuck transfers; a slow line must not abort every piece (livelock)
 
 
 def _get_piece(path: str, start: int, end: int) -> bytes:
@@ -40,7 +40,7 @@ def _get_piece(path: str, start: int, end: int) -> bytes:
     for chunk in r.iter_content(1 << 20):
         buf += chunk
         dt = time.time() - t0
-        if dt > 15 and len(buf) / dt < MIN_RATE:
+        if dt > 30 and len(buf) / dt < MIN_RATE:
             r.close()
             raise IOError(f"stalled at {len(buf) / dt / 1e6:.2f} MB/s")
     if len(buf) != end - start:
