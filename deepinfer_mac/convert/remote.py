@@ -120,7 +120,7 @@ def convert_engram_rows(codes: np.ndarray, scale: np.ndarray) -> bytes:
     deq = Q.dequant_fp8_rowscale(mx.array(codes), mx.array(scale)).astype(mx.bfloat16)
     q, s, b = mx.quantize(deq, group_size=F.GROUP, bits=F.ENGRAM_BITS)
     rows = mx.concatenate([q.view(mx.uint8), s.view(mx.uint8), b.view(mx.uint8)], axis=1)
-    assert rows.shape[1] == F.ENGRAM_ROW
+    assert rows.shape[1] == codes.shape[1] * F.ENGRAM_BITS // 8 + 4 * (codes.shape[1] // F.GROUP)
     return np.array(rows).tobytes()
 
 
@@ -259,7 +259,7 @@ class Converter:
             "dense": "mxfp8 (bit-exact from fp8 32x32 blocks); head affine 8-bit",
             "experts": {f"L{i:02d}": F.expert_layout_for(i).to_json() for i in range(self.inf["n_layers"])}
             | {f"M{i}": F.expert_layout_for(i, is_mtp=True).to_json() for i in range(self.inf["n_mtp_layers"])},
-            "engram": {"bits": F.ENGRAM_BITS, "row_bytes": F.ENGRAM_ROW, "layers": self.inf["engram_layer_ids"]},
+            "engram": {"bits": F.ENGRAM_BITS, "dim": F.ENGRAM_DIM, "row_bytes": F.ENGRAM_ROW, "layers": self.inf["engram_layer_ids"]},
         }
         (out / "layout.json").write_text(json.dumps(layout, indent=1))
 

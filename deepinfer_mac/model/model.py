@@ -384,10 +384,14 @@ class Attention:
         o = ops.sparse_attn(q, mx.concatenate(keys), self.sink, mx.concatenate(idxs, axis=-1), self.scale)
         o = rope_tail(o, cs, rd, inverse=True)
 
-        # update the ring with this chunk's newest `win` tokens
+        # update the ring with this chunk's newest `win` tokens. Built functionally (no in-place
+        # writes) so ring snapshots taken for speculative rollback stay valid.
         keep = min(L, win)
-        new_slots = mx.array((pos_np[-keep:] % win).astype(np.int32))
-        ring.kv[new_slots] = kv[-keep:]
+        src = np.full(win, -1, dtype=np.int32)
+        src[pos_np[-keep:] % win] = np.arange(L - keep, L)
+        has = mx.array(src >= 0)
+        ring.kv = mx.where(has[:, None], kv[mx.array(np.maximum(src, 0))], ring.kv)
+        ring.pos = ring.pos.copy()
         ring.pos[pos_np[-keep:] % win] = pos_np[-keep:]
 
         o = act_quant(o.reshape(L, a.o_groups, -1))
@@ -419,6 +423,8 @@ def select_candidate_blocks(logits: mx.array, visible: mx.array, topk_blocks: in
 
 
 class MoE:
+    EXPERT_BATCH = 32
+
     def __init__(self, a: Args, layer_id: int, d: dict, experts, key: str):
         self.a, self.key, self.experts = a, key, experts
         self.n_routed, self.topk = a.moe(layer_id)
@@ -444,11 +450,22 @@ class MoE:
         w1, w2, w3 = self.shared
         y = w2(act_quant(swiglu(w1(x), w3(x), self.a.swiglu_limit).astype(x.dtype))).astype(mx.float32)
         ids = np.unique(idx_np).tolist()
-        for e, ew in zip(ids, self.experts.get(self.key, ids)):
-            rows, col = np.nonzero(idx_np == e)
-            r = mx.array(rows.astype(np.int32))
-            out = run_expert(x[r], ew, w[r, mx.array(col.astype(np.int32))][:, None], self.a.swiglu_limit)
-            y = y.at[r].add(out.astype(mx.float32))
+        # expert-major: each needed expert is fetched once for all of its tokens. Batches bound the
+        # working set during long prefills (a chunk can touch every expert of the layer) and let
+        # the next batch's reads overlap this batch's compute.
+        B = self.EXPERT_BATCH
+        batches = [ids[i : i + B] for i in range(0, len(ids), B)]
+        prefetch = getattr(self.experts, "prefetch", None)
+        for bi, batch in enumerate(batches):
+            if prefetch is not None and bi + 1 < len(batches):
+                prefetch(self.key, batches[bi + 1])
+            for e, ew in zip(batch, self.experts.get(self.key, batch)):
+                rows, col = np.nonzero(idx_np == e)
+                r = mx.array(rows.astype(np.int32))
+                out = run_expert(x[r], ew, w[r, mx.array(col.astype(np.int32))][:, None], self.a.swiglu_limit)
+                y = y.at[r].add(out.astype(mx.float32))
+            if len(batches) > 1:
+                mx.eval(y)
         return y.astype(x.dtype)
 
 
@@ -580,7 +597,10 @@ class Transformer:
         last_source = max(a.kv_source_layers)
         hiddens = []
         for i, layer in enumerate(self.layers):
-            if replay_from and i == last_source + 1 and replay_from < L:
+            if replay_from and i == last_source + 1 and replay_from >= L:
+                st.pos = start + L  # a non-final prefill chunk: the decoder replays nothing
+                return (None, None) if want_hidden else None
+            if replay_from and i == last_source + 1:
                 h, pre_mix, positions = h[replay_from:], pre_mix[replay_from:], positions[replay_from:]
                 if sh.topk is not None:
                     sh.topk = sh.topk[replay_from:]

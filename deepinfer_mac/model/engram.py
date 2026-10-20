@@ -152,10 +152,12 @@ class SSDEngramTable:
     """The converted 4-bit tables on SSD: 144-byte rows, read with parallel preads. Each
     position needs (n-1) * heads = 24 rows per engram layer; duplicates are read once."""
 
-    def __init__(self, root: Path, layer_ids, threads: int = 16):
+    def __init__(self, root: Path, layer_ids, dim: int = F.ENGRAM_DIM, bits: int = F.ENGRAM_BITS, threads: int = 16):
         self.fds = {l: os.open(root / "engram" / f"L{l:02d}.bin", os.O_RDONLY) for l in layer_ids}
-        self.pool = ThreadPoolExecutor(threads)
-        self.row = F.ENGRAM_ROW
+        self.pool = ThreadPoolExecutor(threads, thread_name_prefix="engram-io")
+        self.dim, self.bits = dim, bits
+        self.qbytes = dim * bits // 8
+        self.row = self.qbytes + 2 * (dim // F.GROUP) * 2
 
     def _read(self, fd: int, rows: np.ndarray) -> np.ndarray:
         out = np.empty((len(rows), self.row), dtype=np.uint8)
@@ -174,9 +176,9 @@ class SSDEngramTable:
     def lookup(self, layer_id: int, ids: np.ndarray, pending=None) -> mx.array:
         uniq, futs, inv = pending if pending is not None else self.fetch(layer_id, ids)
         raw = np.concatenate([f.result() for f in futs])
-        g = F.ENGRAM_DIM // F.GROUP
-        q = mx.array(raw[:, :128].copy()).view(mx.uint32)
-        s = mx.array(raw[:, 128 : 128 + 2 * g].copy()).view(mx.bfloat16)
-        b = mx.array(raw[:, 128 + 2 * g :].copy()).view(mx.bfloat16)
-        rows = mx.dequantize(q, s, b, group_size=F.GROUP, bits=F.ENGRAM_BITS)
-        return rows[mx.array(inv.astype(np.int32))].reshape(*ids.shape, F.ENGRAM_DIM)
+        g, qb = self.dim // F.GROUP, self.qbytes
+        q = mx.array(raw[:, :qb].copy()).view(mx.uint32)
+        s = mx.array(raw[:, qb : qb + 2 * g].copy()).view(mx.bfloat16)
+        b = mx.array(raw[:, qb + 2 * g :].copy()).view(mx.bfloat16)
+        rows = mx.dequantize(q, s, b, group_size=F.GROUP, bits=self.bits)
+        return rows[mx.array(inv.astype(np.int32))].reshape(*ids.shape, self.dim)
