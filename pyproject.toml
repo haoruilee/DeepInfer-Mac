@@ -1,0 +1,23 @@
+[project]
+name = "deepinfer-mac"
+version = "0.1.0"
+description = "DeepInfer for Apple Silicon: DeepSeek-V4.1-Flash on a 24 GB Mac via MLX + SSD expert streaming"
+requires-python = ">=3.11"
+license = {text = "Apache-2.0"}
+dependencies = ["mlx>=0.30", "numpy", "safetensors", "tokenizers", "requests", "xgrammar", "deepseek-recipe", "fastapi", "uvicorn"]
+
+[project.optional-dependencies]
+test = ["pytest", "torch>=2.8", "sympy", "pillow", "httpx"]
+
+[project.scripts]
+deepinfer-mac = "deepinfer_mac.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["deepinfer_mac*"]
+
+[tool.setuptools.package-data]
+"deepinfer_mac.convert" = ["tensor_index.json"]
