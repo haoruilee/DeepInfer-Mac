@@ -30,7 +30,7 @@ for look in (False, True):
         tok = int(np.argmax(np.array(lg[-1])))
     BT.clear()
     st = ours.new_state(); ours.forward(st, toks); BT.clear(); tok = 1000
-    R.STORE.cache.clear(); R.STORE.used = 0; R.STORE.stats.update(hits=0, misses=0, bytes=0, wait_s=0.0)
+    R.STORE.stats.update(hits=0, misses=0, bytes=0, wait_s=0.0)
     for i in range(24):
         lg = ours.forward(st, [tok]); tok = int(np.argmax(np.array(lg[-1])))
     per = np.median(BT[6 * 4 :]) 

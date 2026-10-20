@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: macos-14  # Apple Silicon: MLX needs Metal
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          uv venv
+          uv pip install -e ".[test]"
+      - name: Fetch the official reference code and tokenizer (parity oracle)
+        run: |
+          mkdir -p ref/inference ref/tok
+          B=https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash-1017/resolve/main
+          for f in model.py kernel.py engram.py vision.py image_processor.py; do curl -sfL $B/inference/$f -o ref/inference/$f; done
+          curl -sfL $B/tokenizer.json -o ref/tok/tokenizer.json
+      - name: Test
+        env:
+          DSV41_REF: ref/inference
+          DSV41_TOKENIZER: ref/tok/tokenizer.json
+        run: uv run pytest -q tests/
