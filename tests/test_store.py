@@ -1,0 +1,53 @@
+"""ExpertStore slab/LRU invariants on a synthetic expert file."""
+
+import json
+
+import numpy as np
+import pytest
+
+from deepinfer_mac import format as F
+from deepinfer_mac.store import ExpertStore
+
+
+@pytest.fixture()
+def store(tmp_path):
+    lay = F.ExpertLayout(2, 2, 3, dim=128, inter=64)
+    n = 64
+    rng = np.random.default_rng(0)
+    data = rng.integers(0, 256, size=(n, lay.stride), dtype=np.uint8)
+    for e in range(n):
+        data[e, :8] = np.frombuffer(np.int64(e).tobytes(), np.uint8)  # expert id in its first bytes
+    (tmp_path / "experts").mkdir()
+    data.tofile(tmp_path / "experts" / "L00.bin")
+    (tmp_path / "layout.json").write_text(json.dumps({"experts": {"L00": lay.to_json()}}))
+    s = ExpertStore(tmp_path, budget_bytes=0)  # minimum slab (96 slots)
+    return s, data, lay
+
+
+def _check(s, data, lay, key, ids):
+    slab, slots = s.get_slots(key, ids)
+    first = lay.parts()[0]
+    q = np.array(slab.parts[first[0]])
+    for e, sl in zip(ids, slots):
+        got = q[sl].view(np.uint8).reshape(-1)[: first[4]]
+        assert np.array_equal(got, data[e, : first[4]]), (e, sl)
+
+
+def test_contents_and_eviction(store):
+    s, data, lay = store
+    rng = np.random.default_rng(1)
+    for step in range(300):  # far more distinct experts over time than slots
+        ids = rng.choice(64, 6, replace=False).tolist()
+        _check(s, data, lay, "L00", ids)
+    # a request mixing many residents with misses must not evict its own residents
+    big = list(range(64))
+    _check(s, data, lay, "L00", big[:40])
+    _check(s, data, lay, "L00", big[20:64])
+    assert 0 < s.hit_rate() < 1
+
+
+def test_optional_prefetch_never_breaks_requests(store):
+    s, data, lay = store
+    for i in range(50):
+        s.prefetch("L00", [(i * 7 + j) % 64 for j in range(30)], optional=True)
+        _check(s, data, lay, "L00", [(i * 5 + j) % 64 for j in range(6)])

@@ -119,10 +119,10 @@ class ExpertStore:
 
     # -- slots
 
-    def _take_slot(self, slab: Slab, optional: bool) -> int | None:
+    def _take_slot(self, slab: Slab, optional: bool, protect: set[int] = frozenset()) -> int | None:
         if slab.free:
             return slab.free.pop()
-        pinned = slab.pins[0] | slab.pins[1]
+        pinned = slab.pins[0] | slab.pins[1] | protect
         for k, slot in slab.lru.items():  # oldest first
             if slot not in pinned and k not in self.inflight:
                 del slab.lru[k]
@@ -133,17 +133,21 @@ class ExpertStore:
 
     def prefetch(self, key: str, ids, optional: bool = False) -> None:
         """Start reads for experts not resident. `optional` (lookahead) never evicts pinned
-        slots and silently skips when the slab is full."""
+        slots and silently skips when the slab is full. Experts of this same request that are
+        already resident are never evicted to make room for the others."""
         slab = self.slabs[key]
+        ids = [int(e) for e in ids]
         with self.lock:
-            for e in map(int, ids):
+            protect = {slab.lru[(key, e)] for e in ids if (key, e) in slab.lru}
+            for e in ids:
                 k = (key, e)
                 if k in slab.lru:
                     continue
-                slot = self._take_slot(slab, optional)
+                slot = self._take_slot(slab, optional, protect)
                 if slot is None:
                     return
                 slab.lru[k] = slot
+                protect.add(slot)
                 self.inflight[k] = self.pool.submit(self._read, key, e, slot)
                 self.stats["bytes"] += self.layouts[key].nbytes
                 if optional:

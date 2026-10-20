@@ -18,9 +18,9 @@ M.Block.__call__ = timed
 st = ours.new_state(); ours.forward(st, toks); tok = 1000
 for i in range(24):
     lg = ours.forward(st, [tok]); tok = int(np.argmax(np.array(lg[-1])))
-for look in (False, True, False, True):
+for look in (False, True):
     M.MoE.LOOKAHEAD = look
-    R.STORE.cache.clear(); R.STORE.used = 0
+    pass
     st = ours.new_state(); ours.forward(st, toks)
     R.STORE.stats.update(hits=0, misses=0, bytes=0, wait_s=0.0)
     rng = np.random.default_rng(0); ts = []
