@@ -43,6 +43,10 @@ def round_e2m1(x: mx.array) -> mx.array:
 
 
 def act_quant(x: mx.array, block: int = 32) -> mx.array:
+    return _act_quant_c[block](x)
+
+
+def _act_quant(x: mx.array, block: int = 32) -> mx.array:
     """kernel.act_quant(..., scale_fmt='ue8m0', inplace=True): fp8 fake-quant per `block` along
     the last dim with power-of-two scales; returns x's dtype."""
     shape, dtype = x.shape, x.dtype
@@ -54,6 +58,10 @@ def act_quant(x: mx.array, block: int = 32) -> mx.array:
 
 
 def fp4_act_quant(x: mx.array, block: int = 32, e4m3_scale: bool = False) -> mx.array:
+    return _fp4_c[(block, e4m3_scale)](x)
+
+
+def _fp4_act_quant(x: mx.array, block: int = 32, e4m3_scale: bool = False) -> mx.array:
     """kernel.fp4_act_quant(..., inplace=True): fp4 fake-quant. Power-of-two scales (indexer) or,
     with e4m3_scale, scales rounded to e4m3 (compressed KV, block 16)."""
     shape, dtype = x.shape, x.dtype
@@ -70,6 +78,11 @@ def fp4_act_quant(x: mx.array, block: int = 32, e4m3_scale: bool = False) -> mx.
 def rms_norm(x: mx.array, w: mx.array, eps: float) -> mx.array:
     """RMSNorm in fp32, weight applied before casting back (matches the reference exactly; the
     model's eps is 1e-20, below what mx.fast.rms_norm guarantees to honour)."""
+    return _rms_c(x, w, mx.array(eps, dtype=mx.float32))
+
+
+@mx.compile
+def _rms_c(x, w, eps):
     xf = x.astype(mx.float32)
     y = xf * mx.rsqrt(mx.square(xf).mean(-1, keepdims=True) + eps)
     return (w.astype(mx.float32) * y).astype(x.dtype)
@@ -127,6 +140,16 @@ def rope_tail(x: mx.array, cs, rd: int, inverse: bool = False) -> mx.array:
 
 
 def hc_split_sinkhorn(mixes: mx.array, scale: mx.array, base: mx.array, hc: int, iters: int, eps: float):
+    key = (hc, iters, eps)
+    if key not in _sinkhorn_c:
+        _sinkhorn_c[key] = mx.compile(lambda m, s, b: _hc_split_sinkhorn(m, s, b, hc, iters, eps))
+    return _sinkhorn_c[key](mixes, scale, base)
+
+
+_sinkhorn_c: dict = {}
+
+
+def _hc_split_sinkhorn(mixes: mx.array, scale: mx.array, base: mx.array, hc: int, iters: int, eps: float):
     """kernel.hc_split_sinkhorn. mixes: [..., (2+hc)*hc] fp32 -> pre [..., hc], post [..., hc],
     comb [..., hc, hc] (doubly stochastic)."""
     pre = mx.sigmoid(mixes[..., :hc] * scale[0] + base[:hc]) + eps
@@ -163,3 +186,7 @@ def sparse_attn(q: mx.array, kv: mx.array, sink: mx.array, idxs: mx.array, scale
         o = (p.astype(mx.bfloat16).astype(mx.float32) @ g.astype(mx.float32)) / denom
         outs.append(o.astype(q.dtype))
     return mx.concatenate(outs, axis=0) if len(outs) > 1 else outs[0]
+
+
+_act_quant_c = {b: mx.compile(lambda x, b=b: _act_quant(x, b)) for b in (16, 32)}
+_fp4_c = {(b, e): mx.compile(lambda x, b=b, e=e: _fp4_act_quant(x, b, e)) for b in (16, 32) for e in (False, True)}

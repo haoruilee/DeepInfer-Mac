@@ -42,8 +42,7 @@ class DSparkBlock(Block):
         idx = np.concatenate([valid, win + np.arange(n)]).astype(np.int32)  # whole block, both ways
         o = ops.sparse_attn(q, mx.concatenate([ring.kv, kv]), at.sink, mx.broadcast_to(mx.array(idx), (n, idx.size)), at.scale)
         o = M.act_quant(rope_tail(o, cs, rd, inverse=True).reshape(n, a.o_groups, -1))
-        o = mx.concatenate([at.wo_a[g](o[:, g]) for g in range(a.o_groups)], axis=-1)
-        return at.wo_b(o)
+        return at.wo_b(at.wo_a(o))
 
     def step(self, x, p, pre_mix, main_x, ring):
         eps = self.a.norm_eps

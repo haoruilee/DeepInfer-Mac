@@ -120,6 +120,33 @@ class Linear:
         return out
 
 
+class GroupedLinear:
+    """wo_a: block-diagonal over groups (each group projects only its own heads). One batched
+    gather_qmm over the groups instead of a matmul per group."""
+
+    def __init__(self, lin: Linear, groups: int):
+        self.lin, self.g = lin, groups
+        rows = lin.w.shape[0] // groups
+        if lin.scales is not None:
+            self.w = lin.w.reshape(groups, rows, -1)
+            self.scales = lin.scales.reshape(groups, rows, -1)
+            self.biases = None if lin.biases is None else lin.biases.reshape(groups, rows, -1)
+            self.idx = mx.arange(groups, dtype=mx.uint32)
+        else:
+            self.w = lin.w.reshape(groups, rows, -1)
+
+    def __call__(self, o: mx.array) -> mx.array:
+        """o: [L, groups, in] -> [L, groups * rows]"""
+        L = o.shape[0]
+        x = o.swapaxes(0, 1)[:, None]  # [g, 1, L, in]
+        if self.lin.scales is None:
+            y = x.astype(self.w.dtype) @ self.w.swapaxes(-1, -2)[:, None]
+        else:
+            y = mx.gather_qmm(x, self.w, self.scales, self.biases, lhs_indices=self.idx, rhs_indices=self.idx,
+                              transpose=True, group_size=self.lin.group, bits=self.lin.bits, mode=self.lin.mode)
+        return y.reshape(self.g, L, -1).swapaxes(0, 1).reshape(L, -1)
+
+
 @dataclass
 class ExpertWeights:
     """One routed expert: per projection (packed, scales, biases-or-None, bits, mode)."""
@@ -136,19 +163,34 @@ def _qmm(x, p):
 
 
 def swiglu(gate: mx.array, up: mx.array, limit: float) -> mx.array:
+    return _swiglu_c(gate, up, mx.array(limit, dtype=mx.float32))
+
+
+@mx.compile
+def _swiglu_c(gate, up, limit):
     gate, up = gate.astype(mx.float32), up.astype(mx.float32)
-    if limit > 0:
-        up = mx.clip(up, -limit, limit)
-        gate = mx.minimum(gate, limit)
+    up = mx.where(limit > 0, mx.clip(up, -limit, limit), up)
+    gate = mx.where(limit > 0, mx.minimum(gate, limit), gate)
     return gate * mx.sigmoid(gate) * up
 
 
-def run_expert(x: mx.array, e: ExpertWeights, weights: mx.array | None, limit: float) -> mx.array:
-    xq = act_quant(x)
-    h = swiglu(_qmm(xq, e.w1), _qmm(xq, e.w3), limit)
-    if weights is not None:
-        h = weights * h
-    return _qmm(act_quant(h.astype(x.dtype)), e.w2)
+def run_expert(xq: mx.array, e: ExpertWeights, weights: mx.array | None, limit: float) -> mx.array:
+    """xq: the fp8-fake-quantized input rows (quantized once per MoE call)."""
+    key = tuple(p[3:] for p in (e.w1, e.w3, e.w2)) + (e.w1[2] is None,)
+    f = _expert_fns.get(key)
+    if f is None:
+        f = _expert_fns[key] = mx.compile(lambda xq, w, lim, a1, b1, c1, a3, b3, c3, a2, b2, c2: _expert(
+            xq, w, lim, (a1, b1, c1, *key[0]), (a3, b3, c3, *key[1]), (a2, b2, c2, *key[2])))
+    w = weights if weights is not None else mx.ones((xq.shape[0], 1), dtype=mx.float32)
+    return f(xq, w, mx.array(limit, dtype=mx.float32), *e.w1[:3], *e.w3[:3], *e.w2[:3])
+
+
+_expert_fns: dict = {}
+
+
+def _expert(xq, w, limit, p1, p3, p2):
+    h = _swiglu_c(_qmm(xq, p1), _qmm(xq, p3), limit)
+    return _qmm(act_quant(((w * h).astype(xq.dtype))), p2)
 
 
 # ------------------------------------------------------------------------------ caches
@@ -264,8 +306,7 @@ class Attention:
         self.wq_b = Linear(d, "attn.wq_b")
         self.wkv = Linear(d, "attn.wkv")
         self.kv_norm = d["attn.kv_norm.weight"]
-        wo_a = Linear(d, "attn.wo_a")
-        self.wo_a = [wo_a.rows(g * a.o_lora_rank, (g + 1) * a.o_lora_rank) for g in range(a.o_groups)]
+        self.wo_a = GroupedLinear(Linear(d, "attn.wo_a"), a.o_groups)
         self.wo_b = Linear(d, "attn.wo_b")
         self.scale = a.head_dim**-0.5
         if self.ratio:
@@ -307,7 +348,7 @@ class Attention:
 
     # -- indexer
 
-    def _indexer(self, x, qr, latent, first_group, positions, sh: Shared, c: CompressorState, offset: int):
+    def _indexer(self, x, qr, latent, first_group, positions, sh: Shared, c: CompressorState, offset: int, end: int):
         a, r, rd = self.a, self.ratio, self.a.rope_head_dim
         if self.owns_index_k:
             if latent is not None:
@@ -320,7 +361,7 @@ class Attention:
         q = self.i_wq_b(qr).reshape(L, a.index_n_heads, a.index_head_dim)
         q = fp4_act_quant(rope_tail(q, self.rope.cos_sin(positions), rd))
         visible = (positions + 1) // r  # compressed positions each query may see
-        T = int(visible[-1].item())
+        T = end // r
         index_k = sh.index_k.view(T)
         # bf16 roundings at the same points as the reference's torch ops, so near-ties in the
         # top-k resolve the same way
@@ -343,10 +384,9 @@ class Attention:
 
     # -- forward
 
-    def __call__(self, x: mx.array, positions: mx.array, st: SeqState, ring: Ring, sh: Shared) -> mx.array:
+    def __call__(self, x: mx.array, positions: mx.array, st: SeqState, ring: Ring, sh: Shared, start: int) -> mx.array:
         a, rd = self.a, self.a.rope_head_dim
         L = x.shape[0]
-        start = int(positions[0].item())
         cs = self.rope.cos_sin(positions)
         qr = rms_norm(self.wq_a(x), self.q_norm, a.norm_eps)
         q = rope_tail(self.wq_b(qr).reshape(L, a.n_heads, a.head_dim), cs, rd)
@@ -370,10 +410,10 @@ class Attention:
             if self.is_kv_source:
                 sh.comp = c
             if self.is_index_source:
-                if int(((positions[-1] + 1) // self.ratio).item()) == 0:
+                if (start + L) // self.ratio == 0:
                     sh.topk = mx.full((L, 0), -1, dtype=mx.int32)
                 else:
-                    sh.topk = self._indexer(x, qr, latent, first_group, positions, sh, c, offset)
+                    sh.topk = self._indexer(x, qr, latent, first_group, positions, sh, c, offset, start + L)
             if latent is not None:
                 gpos = mx.arange(first_group, first_group + latent.shape[0]) * self.ratio
                 latent = fp4_act_quant(rope_tail(latent, self.rope.cos_sin(gpos), rd), block=16, e4m3_scale=True)
@@ -395,8 +435,7 @@ class Attention:
         ring.pos[pos_np[-keep:] % win] = pos_np[-keep:]
 
         o = act_quant(o.reshape(L, a.o_groups, -1))
-        o = mx.concatenate([self.wo_a[g](o[:, g]) for g in range(a.o_groups)], axis=-1)
-        return self.wo_b(o)
+        return self.wo_b(self.wo_a(o))
 
 
 def select_candidate_blocks(logits: mx.array, visible: mx.array, topk_blocks: int, block: int) -> mx.array:
@@ -448,7 +487,8 @@ class MoE:
         w, idx = self.route(x, image_mask)
         idx_np = np.array(idx)
         w1, w2, w3 = self.shared
-        y = w2(act_quant(swiglu(w1(x), w3(x), self.a.swiglu_limit).astype(x.dtype))).astype(mx.float32)
+        xq = act_quant(x)
+        y = w2(swiglu(w1(x), w3(x), self.a.swiglu_limit).astype(x.dtype)).astype(mx.float32)
         ids = np.unique(idx_np).tolist()
         # expert-major: each needed expert is fetched once for all of its tokens. Batches bound the
         # working set during long prefills (a chunk can touch every expert of the layer) and let
@@ -462,7 +502,7 @@ class MoE:
             for e, ew in zip(batch, self.experts.get(self.key, batch)):
                 rows, col = np.nonzero(idx_np == e)
                 r = mx.array(rows.astype(np.int32))
-                out = run_expert(x[r], ew, w[r, mx.array(col.astype(np.int32))][:, None], self.a.swiglu_limit)
+                out = run_expert(xq[r], ew, w[r, mx.array(col.astype(np.int32))][:, None], self.a.swiglu_limit)
                 y = y.at[r].add(out.astype(mx.float32))
             if len(batches) > 1:
                 mx.eval(y)
@@ -515,10 +555,14 @@ class Block:
 
     @staticmethod
     def hc_pre(x, pre):
-        return (pre[..., None] * x.astype(mx.float32)).sum(axis=1).astype(x.dtype)
+        return _hc_pre_c(x, pre)
 
     @staticmethod
     def hc_post(x, residual, post, comb):
+        return _hc_post_c(x, residual, post, comb)
+
+    @staticmethod
+    def _hc_post(x, residual, post, comb):
         # fp32 products summed over the residual streams in order, like the reference's torch.sum
         prod = comb[..., None] * residual.astype(mx.float32)[:, :, None, :]  # [L, j, k, d]
         acc = prod[:, 0]
@@ -527,12 +571,12 @@ class Block:
         y = post[..., None] * x.astype(mx.float32)[:, None, :] + acc
         return y.astype(x.dtype)
 
-    def __call__(self, x, positions, pre_mix, st: SeqState, ring: Ring, sh: Shared, image_mask=None):
+    def __call__(self, x, positions, pre_mix, st: SeqState, ring: Ring, sh: Shared, image_mask=None, start: int = 0):
         eps = self.a.norm_eps
         residual = x
         attn_pre, attn_post, attn_comb = self.hc_mixes(x, "attn")
         h = rms_norm(self.hc_pre(x, pre_mix), self.attn_norm, eps)
-        h = self.attn(h, positions, st, ring, sh)
+        h = self.attn(h, positions, st, ring, sh, start)
         x = self.hc_post(h, residual, attn_post, attn_comb)
 
         residual = x
@@ -541,6 +585,14 @@ class Block:
         h = self.ffn(h, image_mask)
         x = self.hc_post(h, residual, ffn_post, ffn_comb)
         return x, ffn_pre
+
+
+@mx.compile
+def _hc_pre_c(x, pre):
+    return (pre[..., None] * x.astype(mx.float32)).sum(axis=1).astype(x.dtype)
+
+
+_hc_post_c = mx.compile(Block._hc_post)
 
 
 # ------------------------------------------------------------------------------ the model
@@ -640,8 +692,7 @@ class Transformer:
                 h = layer.engram(h, hash_ids[:, a.engram_layer_ids.index(i)], None)
             if i in a.dspark_target_layer_ids:
                 hiddens.append(h.mean(axis=1))
-            h, pre_mix = layer(h, positions, pre_mix, st, st.rings[i], sh)
-            mx.eval(h, pre_mix)
+            h, pre_mix = layer(h, positions, pre_mix, st, st.rings[i], sh, start=start + ((replay_from or 0) if i > last_source else 0))
         st.pos = start + L
         h = Block.hc_pre(h, pre_mix)
         if not all_logits:

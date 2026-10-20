@@ -193,7 +193,7 @@ class TinyWeights:
 # rounding, where a single rounding or routing flip on a near-tie moves one token's logits.
 CONFIGS = {
     "logic": (dict(index_topk=64, candidate_topk_blocks=64), True, 0.9999),
-    "full": ({}, False, 0.99),
+    "full": ({}, False, 0.975),  # ulp-level reorderings (batched matmuls) shift which fp8 roundings flip
 }
 
 
