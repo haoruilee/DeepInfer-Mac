@@ -153,6 +153,7 @@ class LLM:
         moe_topk: int | None = None,
     ):
         self.root = root = Path(model).expanduser()
+        mx.set_cache_limit(1 << 30)  # freed buffers go back to macOS instead of MLX's cache
         cfg = json.loads((root / "inference_config.json").read_text())
         self.args = args = Args.from_dict(cfg)
         if moe_topk:

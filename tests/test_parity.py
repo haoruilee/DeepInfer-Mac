@@ -201,6 +201,7 @@ def _no_quant(enable: bool):
     from deepinfer_mac.model import model as M
 
     saved = (ref.act_quant, ref.fp4_act_quant, ref.fp8_gemm, ref.fp4_gemm, M.act_quant, M.fp4_act_quant)
+    M._expert_fns.clear()  # compiled functions bake in whichever act_quant was live when traced
     if not enable:
         return saved
 
@@ -226,6 +227,7 @@ def _restore(saved):
     from deepinfer_mac.model import model as M
 
     ref.act_quant, ref.fp4_act_quant, ref.fp8_gemm, ref.fp4_gemm, M.act_quant, M.fp4_act_quant = saved
+    M._expert_fns.clear()
 
 
 @pytest.fixture(scope="module", params=list(CONFIGS))

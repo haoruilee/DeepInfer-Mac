@@ -158,6 +158,8 @@ class ExpertWeights:
 
 def _qmm(x, p):
     q, s, b, bits, mode = p
+    if s.dtype == mx.uint16 and mode == "affine":  # bf16 bits as stored on SSD
+        s, b = s.view(mx.bfloat16), b.view(mx.bfloat16)
     group = 32 if mode.startswith("mx") else 64
     return mx.quantized_matmul(x, q, s, b, transpose=True, group_size=group, bits=bits, mode=mode)
 
@@ -348,7 +350,7 @@ class Attention:
 
     # -- indexer
 
-    def _indexer(self, x, qr, latent, first_group, positions, sh: Shared, c: CompressorState, offset: int, end: int):
+    def _indexer(self, x, qr, latent, first_group, positions, sh: Shared, c: CompressorState, end: int):
         a, r, rd = self.a, self.ratio, self.a.rope_head_dim
         if self.owns_index_k:
             if latent is not None:
@@ -380,30 +382,60 @@ class Attention:
         idx = mx.argpartition(-score, kth=k - 1, axis=-1)[:, :k] if k < T else mx.broadcast_to(mx.arange(T), (L, T))
         idx = mx.sort(idx.astype(mx.int32), axis=-1)
         ok = mx.take_along_axis(score, idx, axis=-1) > -mx.inf
-        return mx.where(ok & (idx < visible[:, None]), idx + offset, -1).astype(mx.int32)
+        idx = mx.where(ok & (idx < visible[:, None]), idx, -1).astype(mx.int32)
+        if k < a.index_topk:  # fixed width keeps the attention kernel's shapes constant
+            idx = mx.concatenate([idx, mx.full((L, a.index_topk - k), -1, dtype=mx.int32)], axis=-1)
+        return idx
 
     # -- forward
+
+    def _proj(self, x, cos, sin):
+        a, rd = self.a, self.a.rope_head_dim
+        qr = rms_norm(self.wq_a(x), self.q_norm, a.norm_eps)
+        q = rope_tail(self.wq_b(qr).reshape(x.shape[0], a.n_heads, a.head_dim), (cos, sin), rd)
+        kv = act_quant(rope_tail(rms_norm(self.wkv(x), self.kv_norm, a.norm_eps), (cos, sin), rd))
+        return qr, q, kv
+
+    def _core(self, q, g, valid, cos, sin):
+        """Attention over gathered keys (== values) g [L, K, D] with sink, then inverse RoPE and the
+        output projections. Mirrors kernel.sparse_attn + the tail of Attention.forward."""
+        a = self.a
+        s = (q.astype(mx.float32) @ g.astype(mx.float32).swapaxes(-1, -2)) * self.scale  # [L, H, K]
+        s = mx.where(valid[:, None, :], s, -mx.inf)
+        m = mx.maximum(s.max(-1, keepdims=True), -1e30)
+        p = mx.exp(s - m)
+        denom = p.sum(-1, keepdims=True) + mx.exp(self.sink[None, :, None] - m)
+        o = ((p.astype(mx.bfloat16).astype(mx.float32) @ g.astype(mx.float32)) / denom).astype(q.dtype)
+        o = rope_tail(o, (cos, sin), a.rope_head_dim, inverse=True)
+        o = act_quant(o.reshape(o.shape[0], a.o_groups, -1))
+        return self.wo_b(self.wo_a(o))
+
+    def _compiled(self):
+        if not hasattr(self, "_proj_c"):
+            self._proj_c = mx.compile(self._proj)
+            self._core_c = mx.compile(self._core)
+        return self._proj_c, self._core_c
+
+    Q_BLOCK = 128
 
     def __call__(self, x: mx.array, positions: mx.array, st: SeqState, ring: Ring, sh: Shared, start: int) -> mx.array:
         a, rd = self.a, self.a.rope_head_dim
         L = x.shape[0]
-        cs = self.rope.cos_sin(positions)
-        qr = rms_norm(self.wq_a(x), self.q_norm, a.norm_eps)
-        q = rope_tail(self.wq_b(qr).reshape(L, a.n_heads, a.head_dim), cs, rd)
-        kv = act_quant(rope_tail(rms_norm(self.wkv(x), self.kv_norm, a.norm_eps), cs, rd))
+        proj, core = self._compiled()
+        cos, sin = self.rope.cos_sin(positions)
+        qr, q, kv = proj(x, cos, sin)
 
-        # sliding window over [ring (older positions) | this chunk]
+        # sliding window: indices into [ring (older positions) | this chunk]
         win = a.window_size
         pos_np = np.arange(start, start + L)
         wpos = pos_np[:, None] - win + 1 + np.arange(win)[None, :]
         slot = wpos % win
         in_ring = (wpos >= 0) & (wpos < start) & (ring.pos[slot] == wpos)
-        widx = np.where(wpos >= start, win + wpos - start, np.where(in_ring, slot, -1))
-        keys = [ring.kv, kv]
-        idxs = [mx.array(widx.astype(np.int32))]
+        widx = mx.array(np.where(wpos >= start, win + wpos - start, np.where(in_ring, slot, -1)).astype(np.int32))
+        wsrc = mx.concatenate([ring.kv, kv])
 
+        cidx = None
         if self.ratio:
-            offset = win + L
             c = st.comp[self.layer_id] if self.is_kv_source else sh.comp
             first_group = c.kv.n
             latent = self._compress(x, c) if self.is_kv_source else None
@@ -411,18 +443,26 @@ class Attention:
                 sh.comp = c
             if self.is_index_source:
                 if (start + L) // self.ratio == 0:
-                    sh.topk = mx.full((L, 0), -1, dtype=mx.int32)
+                    sh.topk = mx.full((L, a.index_topk), -1, dtype=mx.int32)
                 else:
-                    sh.topk = self._indexer(x, qr, latent, first_group, positions, sh, c, offset, start + L)
+                    sh.topk = self._indexer(x, qr, latent, first_group, positions, sh, c, start + L)
             if latent is not None:
                 gpos = mx.arange(first_group, first_group + latent.shape[0]) * self.ratio
                 latent = fp4_act_quant(rope_tail(latent, self.rope.cos_sin(gpos), rd), block=16, e4m3_scale=True)
                 c.kv.append(latent)
-            keys.append(sh.comp.kv.view())
-            idxs.append(sh.topk)
+            cidx = sh.topk
 
-        o = ops.sparse_attn(q, mx.concatenate(keys), self.sink, mx.concatenate(idxs, axis=-1), self.scale)
-        o = rope_tail(o, cs, rd, inverse=True)
+        outs = []
+        for b0 in range(0, L, self.Q_BLOCK):
+            b1 = min(L, b0 + self.Q_BLOCK)
+            wi = widx[b0:b1]
+            g, valid = wsrc[mx.maximum(wi, 0)], wi >= 0
+            if cidx is not None:
+                ci = cidx[b0:b1]
+                g = mx.concatenate([g, sh.comp.kv.buf[mx.maximum(ci, 0)]], axis=1)
+                valid = mx.concatenate([valid, ci >= 0], axis=1)
+            outs.append(core(q[b0:b1], g, valid, cos[b0:b1], sin[b0:b1]))
+        out = outs[0] if len(outs) == 1 else mx.concatenate(outs)
 
         # update the ring with this chunk's newest `win` tokens. Built functionally (no in-place
         # writes) so ring snapshots taken for speculative rollback stay valid.
@@ -433,9 +473,7 @@ class Attention:
         ring.kv = mx.where(has[:, None], kv[mx.array(np.maximum(src, 0))], ring.kv)
         ring.pos = ring.pos.copy()
         ring.pos[pos_np[-keep:] % win] = pos_np[-keep:]
-
-        o = act_quant(o.reshape(L, a.o_groups, -1))
-        return self.wo_b(self.wo_a(o))
+        return out
 
 
 def select_candidate_blocks(logits: mx.array, visible: mx.array, topk_blocks: int, block: int) -> mx.array:
@@ -463,6 +501,8 @@ def select_candidate_blocks(logits: mx.array, visible: mx.array, topk_blocks: in
 
 class MoE:
     EXPERT_BATCH = 32
+    LOOKAHEAD = True
+    next_moe = None
 
     def __init__(self, a: Args, layer_id: int, d: dict, experts, key: str):
         self.a, self.key, self.experts = a, key, experts
@@ -472,23 +512,47 @@ class MoE:
         self.bias_vl = d.get("ffn.gate.bias_vl")
         self.shared = [Linear(d, f"ffn.shared_experts.{w}") for w in ("w1", "w2", "w3")]
 
-    def route(self, x: mx.array, image_mask: mx.array | None = None):
-        scores = mx.sqrt(mx.logaddexp(x.astype(mx.float32) @ self.gate_w.T, 0.0))  # sqrt(softplus)
-        bias = self.bias
-        if image_mask is not None and self.bias_vl is not None:
-            bias = mx.where(image_mask[:, None], self.bias_vl.astype(mx.float32), bias)
+    def _route_shared(self, x, bias):
+        """Gate (sqrt-softplus scores, bias picks, raw scores weigh) and the shared expert."""
+        scores = mx.sqrt(mx.logaddexp(x.astype(mx.float32) @ self.gate_w.T, 0.0))
         idx = mx.argpartition(-(scores + bias), kth=self.topk - 1, axis=-1)[:, : self.topk]
         w = mx.take_along_axis(scores, idx, axis=-1)
         if self.topk > 1:
             w = w / (w.sum(-1, keepdims=True) + 1e-20)
-        return w * self.a.route_scale, idx
-
-    def __call__(self, x: mx.array, image_mask=None) -> mx.array:
-        w, idx = self.route(x, image_mask)
-        idx_np = np.array(idx)
         w1, w2, w3 = self.shared
         xq = act_quant(x)
         y = w2(swiglu(w1(x), w3(x), self.a.swiglu_limit).astype(x.dtype)).astype(mx.float32)
+        return w * self.a.route_scale, idx, xq, y
+
+    def route(self, x: mx.array, image_mask: mx.array | None = None):
+        w, idx, _, _ = self._route_shared(x, self._bias(x, image_mask))
+        return w, idx
+
+    def _bias(self, x, image_mask):
+        if image_mask is not None and self.bias_vl is not None:
+            return mx.where(image_mask[:, None], self.bias_vl.astype(mx.float32), self.bias)
+        return self.bias
+
+    def __call__(self, x: mx.array, image_mask=None) -> mx.array:
+        if not hasattr(self, "_rs_c"):
+            self._rs_c = mx.compile(self._route_shared)
+        w, idx, xq, y = self._rs_c(x, self._bias(x, image_mask))
+        nxt = self.next_moe
+        if nxt is not None and self.LOOKAHEAD and hasattr(self.experts, "prefetch"):
+            # router lookahead: the next layer's gate on this layer's input predicts most of its
+            # experts; reading them now overlaps the SSD with this layer's and the next attention's
+            # compute
+            pred = mx.argpartition(-(x[-1:].astype(mx.float32) @ nxt.gate_w.T + nxt.bias), kth=nxt.topk - 1, axis=-1)[:, : nxt.topk]
+            idx_np, pred_np = (np.array(a) for a in (idx, pred))
+            self.experts.prefetch(nxt.key, pred_np[0].tolist())
+        else:
+            idx_np = np.array(idx)  # the one host sync per layer: which experts to fetch
+        if x.shape[0] == 1:  # decode: every routed expert sees the single token
+            order = np.argsort(idx_np[0], kind="stable")  # ascending expert id, as in the prefill path
+            ids = idx_np[0][order].tolist()
+            for k, ew in zip(order.tolist(), self.experts.get(self.key, ids)):
+                y = y + run_expert(xq, ew, w[:, k : k + 1], self.a.swiglu_limit).astype(mx.float32)
+            return y.astype(x.dtype)
         ids = np.unique(idx_np).tolist()
         # expert-major: each needed expert is fetched once for all of its tokens. Batches bound the
         # working set during long prefills (a chunk can touch every expert of the layer) and let
@@ -545,13 +609,12 @@ class Block:
         self.engram = Engram(a, layer_id, d, engram_table) if "engram.wkv.weight" in d else None
         self.attn_norm, self.ffn_norm = d["attn_norm.weight"], d["ffn_norm.weight"]
         self.hc = {k: d[f"hc_{k}"].astype(mx.float32) for k in ("attn_fn", "ffn_fn", "attn_base", "ffn_base", "attn_scale", "ffn_scale")}
+        assert (a.hc_mult, a.hc_sinkhorn_iters, a.hc_eps) == (4, 20, 1e-6), "_hc_mixes_c is specialized"
 
     def hc_mixes(self, x, kind):
         a = self.a
-        xf = x.reshape(x.shape[0], -1).astype(mx.float32)
-        rs = mx.rsqrt(mx.square(xf).mean(-1, keepdims=True) + a.norm_eps)
-        mixes = (xf @ self.hc[f"{kind}_fn"].T) * rs
-        return ops.hc_split_sinkhorn(mixes, self.hc[f"{kind}_scale"], self.hc[f"{kind}_base"], a.hc_mult, a.hc_sinkhorn_iters, a.hc_eps)
+        fn, sc, base = self.hc[f"{kind}_fn"], self.hc[f"{kind}_scale"], self.hc[f"{kind}_base"]
+        return _hc_mixes_c(x, fn, sc, base, mx.array(a.norm_eps, dtype=mx.float32))
 
     @staticmethod
     def hc_pre(x, pre):
@@ -585,6 +648,13 @@ class Block:
         h = self.ffn(h, image_mask)
         x = self.hc_post(h, residual, ffn_post, ffn_comb)
         return x, ffn_pre
+
+
+@mx.compile
+def _hc_mixes_c(x, fn, sc, base, eps):
+    xf = x.reshape(x.shape[0], -1).astype(mx.float32)
+    rs = mx.rsqrt(mx.square(xf).mean(-1, keepdims=True) + eps)
+    return ops._hc_split_sinkhorn((xf @ fn.T) * rs, sc, base, 4, 20, 1e-6)
 
 
 @mx.compile
@@ -637,6 +707,8 @@ class Transformer:
         self.head = Linear(g, "head")
         self.head.w = self.head.w if self.head.scales is not None else self.head.w.astype(mx.float32)
         materialize(self.layers, self.head, self.norm)
+        for cur, nxt in zip(self.layers, self.layers[1:]):  # linked after materialize: the walk is depth-limited
+            cur.ffn.next_moe = nxt.ffn
 
     def new_state(self) -> SeqState:
         a = self.a

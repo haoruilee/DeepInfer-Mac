@@ -50,29 +50,34 @@ class ExpertStore:
             self.fds[key] = fd
         return fd
 
-    def _read(self, key: str, e: int) -> np.ndarray:
+    def _read_into(self, key: str, e: int, buf: mx.array) -> mx.array:
+        """IO thread: pread straight into an MLX buffer. Unified memory makes the MLX allocation
+        directly writable, so the bytes land where the GPU reads them -- no staging copy, and no
+        MLX calls off the compute thread (MLX streams are per-thread)."""
         lay = self.layouts[key]
-        buf = np.empty(lay.nbytes, dtype=np.uint8)
-        n = os.preadv(self._fd(key), [buf], e * lay.stride)
+        n = os.preadv(self._fd(key), [memoryview(buf).cast("B")[: lay.nbytes]], e * lay.stride)
         if n != lay.nbytes:
             raise IOError(f"short read on {key} expert {e}: {n} != {lay.nbytes}")
         return buf
 
-    def _to_mx(self, key: str, buf: np.ndarray) -> ExpertWeights:
+    def _views(self, key: str, buf: mx.array) -> ExpertWeights:
         lay = self.layouts[key]
         arrs = {}
         for name, shape, dtype, off, n in lay.parts():
-            a = buf[off : off + n]
-            arrs[name] = mx.array(a.view(np.uint32).reshape(shape)) if dtype == "uint32" else mx.array(a.view(np.uint16).reshape(shape)).view(mx.bfloat16)
+            arrs[name] = buf[off : off + n].view(mx.uint32 if dtype == "uint32" else mx.uint16).reshape(shape)
         bits = {"w1": lay.bits_w1, "w3": lay.bits_w3, "w2": lay.bits_w2}
         return ExpertWeights(*[(arrs[f"{w}.q"], arrs[f"{w}.s"], arrs[f"{w}.b"], bits[w], "affine") for w in ("w1", "w3", "w2")])
 
     def prefetch(self, key: str, ids) -> None:
+        """Compute thread: allocate destination buffers, then hand the reads to the IO pool."""
         with self.lock:
-            for e in ids:
-                k = (key, int(e))
-                if k not in self.cache and k not in self.inflight:
-                    self.inflight[k] = self.pool.submit(self._read, key, int(e))
+            new = [int(e) for e in ids if (key, int(e)) not in self.cache and (key, int(e)) not in self.inflight]
+            if not new:
+                return
+            bufs = [mx.zeros((self.layouts[key].nbytes,), dtype=mx.uint8) for _ in new]
+            mx.eval(bufs)
+            for e, b in zip(new, bufs):
+                self.inflight[(key, e)] = self.pool.submit(self._read_into, key, e, b)
 
     def get(self, key: str, ids) -> list[ExpertWeights]:
         self.prefetch(key, ids)
@@ -88,12 +93,11 @@ class ExpertStore:
                     continue
                 fut = self.inflight.pop(k)
             t = time.perf_counter()
-            buf = fut.result()
+            ew = self._views(key, fut.result())
             self.stats["wait_s"] += time.perf_counter() - t
-            ew = self._to_mx(key, buf)
             with self.lock:
                 self.stats["misses"] += 1
-                self.stats["bytes"] += buf.nbytes
+                self.stats["bytes"] += self.layouts[key].nbytes
                 self.cache[k] = ew
                 self.used += self.layouts[key].stride
                 self._evict(keep={(key, int(x)) for x in ids})

@@ -21,7 +21,7 @@ def dense_bytes(root: Path) -> int:
     return sum(p.stat().st_size for p in (root / "dense").glob("*.safetensors"))
 
 
-def default_expert_budget(root: Path, reserve_gb: float = 7.0) -> int:
+def default_expert_budget(root: Path, reserve_gb: float = 9.5) -> int:
     """Whatever unified memory is left after the resident dense weights and a reserve for macOS,
     other apps and activations; at least 2 GB."""
     return max(2 << 30, int(total_memory() - dense_bytes(root) - reserve_gb * (1 << 30)))
