@@ -58,6 +58,8 @@ def get_range(path: str, start: int, end: int, retries: int = 200) -> bytes:
         b = min(end, a + PIECE)
         piece = bytearray()
         for attempt in range(retries):
+            if len(piece) == b - a:
+                break  # complete, even if the request that delivered the last bytes then failed
             try:
                 _stream_into(piece, path, a + len(piece), b, ENDPOINTS[attempt % len(ENDPOINTS)])
                 if len(piece) != b - a:
