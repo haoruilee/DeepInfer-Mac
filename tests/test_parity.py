@@ -149,13 +149,15 @@ class TinyWeights:
         self.engram = MemoryEngramTable(tables)
         self._embed = _mx(sd["embed.weight"])
 
-    def layer(self, i: int) -> dict:
-        p = f"layers.{i}."
+    def layer(self, i: int, prefix: str | None = None) -> dict:
+        p = prefix or f"layers.{i}."
         out = {}
         for k, t in self.sd.items():
             if not k.startswith(p) or ".experts." in k or ".engram.embed." in k:
                 continue
             key = k[len(p) :]
+            if key in ("embed.weight", "head.weight"):
+                continue  # the draft stages share the backbone's
             if key.endswith(".scale"):
                 continue
             if t.dtype == torch.float8_e4m3fn:
@@ -165,13 +167,17 @@ class TinyWeights:
                 out[key] = _mx(t)
         return out
 
+    def mtp(self, j: int) -> dict:
+        return self.layer(j, prefix=f"mtp.{j}.")
+
     def get(self, key: str, ids: list[int]):
         li = int(key[1:])
+        base = f"mtp.{li}." if key[0] == "M" else f"layers.{li}."
         res = []
         for e in ids:
             parts = []
             for w in ("w1", "w3", "w2"):
-                pre = f"layers.{li}.ffn.experts.{e}.{w}."
+                pre = f"{base}ffn.experts.{e}.{w}."
                 q, s = Q.fp4_to_mxfp4(_np(self.sd[pre + "weight"]), _np(self.sd[pre + "scale"]))
                 parts.append((mx.array(q), mx.array(s), None, 4, "mxfp4"))
             res.append(ExpertWeights(*parts))

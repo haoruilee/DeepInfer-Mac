@@ -546,6 +546,34 @@ class Block:
 # ------------------------------------------------------------------------------ the model
 
 
+def materialize(*objs) -> None:
+    """Evaluate every mx.array reachable through the attributes of `objs`. mx.load is lazy and
+    pins arrays to the loading thread's stream; materializing makes them plain data any thread
+    can use, and front-loads the reads."""
+    seen, arrays = set(), []
+
+    def walk(o, depth=0):
+        if depth > 6 or id(o) in seen:
+            return
+        seen.add(id(o))
+        if isinstance(o, mx.array):
+            arrays.append(o)
+        elif isinstance(o, dict):
+            for v in o.values():
+                walk(v, depth + 1)
+        elif isinstance(o, (list, tuple)):
+            for v in o:
+                walk(v, depth + 1)
+        elif hasattr(o, "__dict__") and not isinstance(o, type):
+            for v in vars(o).values():
+                walk(v, depth + 1)
+
+    for o in objs:
+        walk(o)
+    for i in range(0, len(arrays), 64):
+        mx.eval(arrays[i : i + 64])
+
+
 class Transformer:
     def __init__(self, a: Args, weights, ngram=None):
         self.a, self.w, self.ngram = a, weights, ngram
@@ -556,6 +584,7 @@ class Transformer:
         self.norm = g["norm.weight"]
         self.head = Linear(g, "head")
         self.head.w = self.head.w if self.head.scales is not None else self.head.w.astype(mx.float32)
+        materialize(self.layers, self.head, self.norm)
 
     def new_state(self) -> SeqState:
         a = self.a
@@ -617,8 +646,9 @@ class Transformer:
         h = Block.hc_pre(h, pre_mix)
         if not all_logits:
             h = h[-1:]
-            hiddens = [x[-1:] for x in hiddens]
         logits = self.head(rms_norm(h, self.norm, a.norm_eps)).astype(mx.float32)
         if want_hidden:
+            # DSpark's input: the target layers' (mean over hc copies) inputs, for every position
+            # the decoder processed -- the last rows of this chunk
             return logits, mx.concatenate(hiddens, axis=-1) if hiddens else None
         return logits

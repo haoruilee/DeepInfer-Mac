@@ -290,6 +290,12 @@ class LLM:
         enc = DeepseekV41Encoding().with_tokenizer(self._recipe_tok)
         return list(enc.encode(conv.conversation)), conv
 
+    def cached_prefix_len(self, prompt: list[int]) -> int:
+        st = self._state
+        if st is not None and len(st.tokens) < len(prompt) and prompt[: len(st.tokens)] == st.tokens:
+            return len(st.tokens)
+        return 0
+
     def reset(self):
         self._state = None
 
