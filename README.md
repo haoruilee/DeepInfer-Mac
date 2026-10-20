@@ -69,15 +69,23 @@ has ~420 GB free; decode is then ~1.5× slower (more bytes per expert).
 
 ## Performance on a MacBook Air M4 / 24 GB
 
-SSD reads ~2.8 GB/s; one decode step needs 40 layers × 6 experts × 12.5 MB = 3 GB minus cache hits.
+Measured so far (scripts in `scripts/`):
 
-* Decode: ~1-1.5 tok/s (measured numbers: see `python -m deepinfer_mac bench`).
-* Time to first token on a fresh prompt: ~1 minute. Even a 100-token prompt routes to ~75% of
-  all experts, so prefill is one sweep over most of the expert files. Follow-up chat turns reuse
-  the conversation state and pay only for their new tokens.
-* `--moe-topk 4` trades quality for a third fewer expert reads.
-* `--spec` (DSpark) helps only when the expert cache is warm: verifying k drafts reads the union of
-  their experts.
+| | |
+|---|---|
+| SSD expert streaming (`bench_store.py`) | 2.8-3.15 GB/s; 6 experts (one layer, one token) in 33 ms |
+| Dense compute per decode token, no SSD (`time_decode.py`) | ~360 ms (measured while the converter shared the GPU) |
+| Resident memory | 7.7 GB dense + expert cache (default: RAM - dense - 9.5 GB ≈ 6.3 GB) |
+
+So one decode step is bounded by ~40 × 33 ms of expert reads minus cache hits, overlapped with
+compute by the router-lookahead prefetch: expect **~0.7-1 tok/s**. Time to first token on a fresh
+prompt is about a minute, because even a 100-token prompt routes to ~75% of all experts, so prefill is
+one sweep over most expert files. Follow-up chat turns reuse the conversation state and pay only
+for their new tokens.
+
+Knobs: `--moe-topk 4` reads a third fewer experts (lossy); `--cache-gb` sizes the expert cache;
+`--spec` enables DSpark, which pays off only when the expert cache is warm (verifying k drafts reads
+the union of their experts).
 
 ## Validation
 
