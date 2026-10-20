@@ -15,7 +15,6 @@ jobs:
           python-version: "3.12"
       - name: Install
         run: |
-          uv venv
           uv pip install -e ".[test]"
       - name: Fetch the official reference code and tokenizer (parity oracle)
         run: |
