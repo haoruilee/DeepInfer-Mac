@@ -115,13 +115,18 @@ def convert_expert(w: dict[str, np.ndarray], layout: F.ExpertLayout) -> bytes:
     return bytes(buf)
 
 
-def convert_engram_rows(codes: np.ndarray, scale: np.ndarray) -> bytes:
-    """[R, 256] e4m3 + [R, 8] e8m0 -> [R, 144] (4-bit affine g64 + bf16 scales + bf16 biases)."""
-    deq = Q.dequant_fp8_rowscale(mx.array(codes), mx.array(scale)).astype(mx.bfloat16)
-    q, s, b = mx.quantize(deq, group_size=F.GROUP, bits=F.ENGRAM_BITS)
-    rows = mx.concatenate([q.view(mx.uint8), s.view(mx.uint8), b.view(mx.uint8)], axis=1)
-    assert rows.shape[1] == codes.shape[1] * F.ENGRAM_BITS // 8 + 4 * (codes.shape[1] // F.GROUP)
-    return np.array(rows).tobytes()
+def convert_engram_rows(codes: np.ndarray, scale: np.ndarray, group: int = F.ENGRAM_GROUP) -> bytes:
+    """[R, d] e4m3 + [R, d/32] e8m0 -> [R, d/2 + 4*d/group]: 4-bit affine (clipping search),
+    then bf16 scales, then bf16 biases, per row."""
+    out = []
+    for a in range(0, codes.shape[0], 1 << 17):  # bounded working set for the clip search
+        deq = Q.dequant_fp8_rowscale(mx.array(codes[a : a + (1 << 17)]), mx.array(scale[a : a + (1 << 17)]))
+        q, s, b = Q.quantize_mse(deq, F.ENGRAM_BITS, group_size=group, ratios=(1.0, 0.95, 0.9, 0.85))
+        rows = mx.concatenate([q.view(mx.uint8), s.view(mx.uint8), b.view(mx.uint8)], axis=1)
+        assert rows.shape[1] == codes.shape[1] * F.ENGRAM_BITS // 8 + 4 * (codes.shape[1] // group)
+        out.append(np.array(rows).tobytes())
+        mx.clear_cache()
+    return b"".join(out)
 
 
 # ------------------------------------------------------------------------------ tasks
@@ -217,7 +222,7 @@ class Converter:
             _, layer, _ = tid.split("-")
             layer = int(layer)
             is_mtp = kind == "XM"
-            layout = F.expert_layout_for(layer, is_mtp=is_mtp)
+            layout = self.expert_layouts[("M" if is_mtp else "L") + (str(layer) if is_mtp else f"{layer:02d}")]
             n_exp = self.inf["dspark_n_routed_experts"] if is_mtp else self.inf["n_routed_experts"]
             path = out / "experts" / (f"M{layer}.bin" if is_mtp else f"L{layer:02d}.bin")
             fd = self._file(path, n_exp * layout.stride)
@@ -253,15 +258,27 @@ class Converter:
             dst = out / ("inference_config.json" if p == "inference/config.json" else Path(p).name)
             if not dst.exists():
                 dst.write_bytes(self._small(p))
+        experts = {f"L{i:02d}": F.expert_layout_for(i).to_json() for i in range(self.inf["n_layers"])}
+        experts |= {f"M{i}": F.expert_layout_for(i, is_mtp=True).to_json() for i in range(self.inf["n_mtp_layers"])}
+        prev = json.loads((out / "layout.json").read_text()) if (out / "layout.json").exists() else {}
+        # a layer with any converted chunk keeps the layout its records were written in
+        for k, v in prev.get("experts", {}).items():
+            kind, n = ("XL", int(k[1:])) if k[0] == "L" else ("XM", int(k[1:]))
+            if any(t.startswith(f"{kind}-{n}-") for t in self.done):
+                experts[k] = v
+        engram = {"bits": F.ENGRAM_BITS, "group": F.ENGRAM_GROUP, "dim": F.ENGRAM_DIM, "row_bytes": F.ENGRAM_ROW, "layers": self.inf["engram_layer_ids"]}
+        if any(t.startswith("EG-") for t in self.done):
+            engram = prev["engram"]  # likewise for the engram tables
         layout = {
             "format": "deepinfer-mac/1",
             "group_size": F.GROUP,
             "dense": "mxfp8 (bit-exact from fp8 32x32 blocks); head affine 8-bit",
-            "experts": {f"L{i:02d}": F.expert_layout_for(i).to_json() for i in range(self.inf["n_layers"])}
-            | {f"M{i}": F.expert_layout_for(i, is_mtp=True).to_json() for i in range(self.inf["n_mtp_layers"])},
-            "engram": {"bits": F.ENGRAM_BITS, "dim": F.ENGRAM_DIM, "row_bytes": F.ENGRAM_ROW, "layers": self.inf["engram_layer_ids"]},
+            "experts": experts,
+            "engram": engram,
         }
         (out / "layout.json").write_text(json.dumps(layout, indent=1))
+        self.expert_layouts = {k: F.ExpertLayout(v["bits_w1"], v["bits_w3"], v["bits_w2"]) for k, v in experts.items()}
+        assert engram["row_bytes"] == F.ENGRAM_ROW, "engram format changed mid-conversion"
 
     def run(self, only: str | None = None, limit: int | None = None):
         self.write_meta()

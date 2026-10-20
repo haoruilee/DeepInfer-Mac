@@ -35,7 +35,7 @@ class DiskWeights:
         budget = expert_budget if expert_budget is not None else default_expert_budget(root)
         self.experts = ExpertStore(root, budget, io_threads)
         eg = layout.get("engram", {})
-        self.engram = SSDEngramTable(root, engram_layers, dim=eg.get("dim", 256), bits=eg.get("bits", 4)) if engram_layers else None
+        self.engram = SSDEngramTable(root, engram_layers, dim=eg.get("dim", 256), bits=eg.get("bits", 4), group=eg.get("group", 64)) if engram_layers else None
         self._embed = np.memmap(root / "embed.bf16", dtype=np.uint16, mode="r").reshape(-1, dim)
 
     def layer(self, i: int) -> dict:

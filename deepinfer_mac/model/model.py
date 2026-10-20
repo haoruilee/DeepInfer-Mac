@@ -501,7 +501,7 @@ def select_candidate_blocks(logits: mx.array, visible: mx.array, topk_blocks: in
 
 class MoE:
     EXPERT_BATCH = 32
-    LOOKAHEAD = True
+    LOOKAHEAD = False  # measured no gain when SSD-bound; flash-moe saw speculative routing cost 38%
     next_moe = None
 
     def __init__(self, a: Args, layer_id: int, d: dict, experts, key: str):
@@ -524,6 +524,36 @@ class MoE:
         y = w2(swiglu(w1(x), w3(x), self.a.swiglu_limit).astype(x.dtype)).astype(mx.float32)
         return w * self.a.route_scale, idx, xq, y
 
+    def _slab_moe(self, x, xq, w, idx_np, y):
+        """All (token, expert) pairs of a layer through one gather_qmm per projection, over the
+        store's slab slots. Prefill works through the experts in batches so the working set stays
+        within the slab; each batch's reads overlap the previous batch's compute."""
+        ids = np.unique(idx_np).tolist()
+        B = len(ids) if x.shape[0] == 1 else self.EXPERT_BATCH
+        batches = [ids[i : i + B] for i in range(0, len(ids), B)]
+        for bi, batch in enumerate(batches):
+            if bi + 1 < len(batches):
+                self.experts.prefetch(self.key, batches[bi + 1], optional=True)
+            slab, slots = self.experts.get_slots(self.key, batch)
+            slot_of = dict(zip(batch, slots))
+            rows, cols = np.nonzero(np.isin(idx_np, batch))
+            order = np.argsort(np.array([slot_of[e] for e in idx_np[rows, cols]]), kind="stable")
+            rows, cols = rows[order], cols[order]
+            rhs = mx.array(np.array([slot_of[e] for e in idx_np[rows, cols]], dtype=np.uint32))[:, None]
+            r = mx.array(rows.astype(np.int32))
+            xr = xq[r][:, None, None, :]  # [n, 1, 1, dim]
+            q1, q3, q2 = slab.proj("w1"), slab.proj("w3"), slab.proj("w2")
+            g = mx.gather_qmm(xr, *q1[:3], rhs_indices=rhs, transpose=True, group_size=64, bits=q1[3], sorted_indices=True)
+            u = mx.gather_qmm(xr, *q3[:3], rhs_indices=rhs, transpose=True, group_size=64, bits=q3[3], sorted_indices=True)
+            wk = w[r, mx.array(cols.astype(np.int32))].astype(mx.float32)[:, None, None, None]
+            h = act_quant((wk * swiglu(g, u, self.a.swiglu_limit)).astype(x.dtype))
+            o = mx.gather_qmm(h, *q2[:3], rhs_indices=rhs, transpose=True, group_size=64, bits=q2[3], sorted_indices=True)
+            o = o.reshape(-1, o.shape[-1]).astype(mx.float32)
+            y = y + o.sum(axis=0, keepdims=True) if x.shape[0] == 1 else y.at[r].add(o)
+            if len(batches) > 1:
+                mx.eval(y)
+        return y.astype(x.dtype)
+
     def route(self, x: mx.array, image_mask: mx.array | None = None):
         w, idx, _, _ = self._route_shared(x, self._bias(x, image_mask))
         return w, idx
@@ -544,9 +574,11 @@ class MoE:
             # compute
             pred = mx.argpartition(-(x[-1:].astype(mx.float32) @ nxt.gate_w.T + nxt.bias), kth=nxt.topk - 1, axis=-1)[:, : nxt.topk]
             idx_np, pred_np = (np.array(a) for a in (idx, pred))
-            self.experts.prefetch(nxt.key, pred_np[0].tolist())
+            self.experts.prefetch(nxt.key, pred_np[0].tolist(), optional=True)
         else:
             idx_np = np.array(idx)  # the one host sync per layer: which experts to fetch
+        if hasattr(self.experts, "get_slots"):
+            return self._slab_moe(x, xq, w, idx_np, y)
         if x.shape[0] == 1:  # decode: every routed expert sees the single token
             order = np.argsort(idx_np[0], kind="stable")  # ascending expert id, as in the prefill path
             ids = idx_np[0][order].tolist()

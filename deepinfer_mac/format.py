@@ -69,12 +69,23 @@ class ExpertLayout:
 
 
 ENGRAM_BITS = 4
-ENGRAM_ROW = ENGRAM_DIM * ENGRAM_BITS // 8 + 2 * (ENGRAM_DIM // GROUP) * 2  # 144
+ENGRAM_GROUP = 32  # g32 + clipping search (other V4.1 ports: plain g64 4-bit costs +7.3% divergence)
+ENGRAM_ROW = ENGRAM_DIM * ENGRAM_BITS // 8 + 2 * (ENGRAM_DIM // ENGRAM_GROUP) * 2  # 160
+
+
+# Index-source layers (their indexer picks what every following layer attends to) and the late
+# layers carry the most weight for output quality (rapid-mlx's per-layer KL study; a 2-bit index layer
+# cut MTP acceptance 84% -> 58% in another port), the last layer most of all.
+HIGH_LAYERS = {8, 14, 20, 24, 28, 32, 35, 36, 37, 38}
 
 
 def expert_layout_for(layer: int, n_layers: int = 40, is_mtp: bool = False) -> ExpertLayout:
-    """The mixed 2/3-bit build: w2 (down proj) always 3-bit; w1/w3 3-bit in the first and last
-    four backbone layers, 2-bit elsewhere and in the DSpark draft layers."""
-    if not is_mtp and (layer < 4 or layer >= n_layers - 4):
+    """Mixed 2/3/4-bit build. w2 (down proj) is always >= 3-bit. Layers 0-3 are 3-bit for
+    historical reasons (converted first; the converter keeps a started layer's layout)."""
+    if is_mtp:
+        return ExpertLayout(2, 2, 3)
+    if layer == n_layers - 1:
+        return ExpertLayout(4, 4, 4)
+    if layer < 4 or layer in HIGH_LAYERS:
         return ExpertLayout(3, 3, 3)
     return ExpertLayout(2, 2, 3)

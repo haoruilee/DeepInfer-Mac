@@ -149,15 +149,27 @@ class MemoryEngramTable:
 
 
 class SSDEngramTable:
-    """The converted 4-bit tables on SSD: 144-byte rows, read with parallel preads. Each
-    position needs (n-1) * heads = 24 rows per engram layer; duplicates are read once."""
+    """The converted 4-bit tables on SSD: fixed-size rows read with parallel preads on F_NOCACHE
+    descriptors (no read-ahead or page-cache pollution on a 24 GB machine), behind a small LRU of
+    recently used rows -- n-grams repeat, and a row is only ~160 bytes. Each position needs
+    (n-1) * heads = 24 rows per engram layer."""
 
-    def __init__(self, root: Path, layer_ids, dim: int = F.ENGRAM_DIM, bits: int = F.ENGRAM_BITS, threads: int = 16):
-        self.fds = {l: os.open(root / "engram" / f"L{l:02d}.bin", os.O_RDONLY) for l in layer_ids}
+    def __init__(self, root: Path, layer_ids, dim: int = F.ENGRAM_DIM, bits: int = F.ENGRAM_BITS,
+                 group: int = F.ENGRAM_GROUP, threads: int = 16, cache_rows: int = 1 << 20):
+        import fcntl
+        from collections import OrderedDict
+
+        self.fds = {}
+        for l in layer_ids:
+            fd = os.open(root / "engram" / f"L{l:02d}.bin", os.O_RDONLY)
+            fcntl.fcntl(fd, 48, 1)  # F_NOCACHE
+            self.fds[l] = fd
         self.pool = ThreadPoolExecutor(threads, thread_name_prefix="engram-io")
-        self.dim, self.bits = dim, bits
+        self.dim, self.bits, self.group = dim, bits, group
         self.qbytes = dim * bits // 8
-        self.row = self.qbytes + 2 * (dim // F.GROUP) * 2
+        self.row = self.qbytes + 2 * (dim // group) * 2
+        self.cache: OrderedDict = OrderedDict()
+        self.cache_rows = cache_rows
 
     def _read(self, fd: int, rows: np.ndarray) -> np.ndarray:
         out = np.empty((len(rows), self.row), dtype=np.uint8)
@@ -165,20 +177,30 @@ class SSDEngramTable:
             out[i] = np.frombuffer(os.pread(fd, self.row, int(r) * self.row), dtype=np.uint8)
         return out
 
-    def fetch(self, layer_id: int, ids: np.ndarray):
-        """Start reading; returns a future of (unique ids, raw rows, inverse)."""
+    def lookup(self, layer_id: int, ids: np.ndarray) -> mx.array:
         uniq, inv = np.unique(ids.reshape(-1), return_inverse=True)
-        fd = self.fds[layer_id]
-        parts = np.array_split(uniq, max(1, min(16, len(uniq) // 32)))
-        futs = [self.pool.submit(self._read, fd, p) for p in parts]
-        return uniq, futs, inv
-
-    def lookup(self, layer_id: int, ids: np.ndarray, pending=None) -> mx.array:
-        uniq, futs, inv = pending if pending is not None else self.fetch(layer_id, ids)
-        raw = np.concatenate([f.result() for f in futs])
-        g, qb = self.dim // F.GROUP, self.qbytes
+        raw = np.empty((len(uniq), self.row), dtype=np.uint8)
+        miss = []
+        for i, r in enumerate(uniq.tolist()):
+            hit = self.cache.get((layer_id, r))
+            if hit is None:
+                miss.append(i)
+            else:
+                self.cache.move_to_end((layer_id, r))
+                raw[i] = hit
+        if miss:
+            miss = np.array(miss)
+            parts = np.array_split(miss, max(1, min(16, len(miss) // 16)))
+            futs = [(p, self.pool.submit(self._read, self.fds[layer_id], uniq[p])) for p in parts]
+            for p, f in futs:
+                raw[p] = f.result()
+            for i in miss.tolist():
+                self.cache[(layer_id, int(uniq[i]))] = raw[i].copy()
+            while len(self.cache) > self.cache_rows:
+                self.cache.popitem(last=False)
+        g, qb = self.dim // self.group, self.qbytes
         q = mx.array(raw[:, :qb].copy()).view(mx.uint32)
         s = mx.array(raw[:, qb : qb + 2 * g].copy()).view(mx.bfloat16)
         b = mx.array(raw[:, qb + 2 * g :].copy()).view(mx.bfloat16)
-        rows = mx.dequantize(q, s, b, group_size=F.GROUP, bits=self.bits)
+        rows = mx.dequantize(q, s, b, group_size=self.group, bits=self.bits)
         return rows[mx.array(inv.astype(np.int32))].reshape(*ids.shape, self.dim)

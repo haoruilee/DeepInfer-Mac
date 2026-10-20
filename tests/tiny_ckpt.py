@@ -55,7 +55,7 @@ def write(rm, args, out: Path, tokenizer: Path, bits=(4, 4, 4)):
     lay = F.ExpertLayout(*bits, dim=args.dim, inter=args.moe_inter_dim)
     (out / "layout.json").write_text(json.dumps({
         "experts": {f"L{i:02d}": lay.to_json() for i in range(args.n_layers)},
-        "engram": {"bits": 4, "dim": args.engram_head_dim, "layers": list(args.engram_layer_ids)},
+        "engram": {"bits": 4, "group": 32, "dim": args.engram_head_dim, "layers": list(args.engram_layer_ids)},
     }))
     shutil.copy(tokenizer, out / "tokenizer.json")
     return out
