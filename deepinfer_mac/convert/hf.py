@@ -8,8 +8,8 @@ import time
 import numpy as np
 import requests
 
-REPO = "deepseek-ai/DeepSeek-V4.1-Flash-1017"
 ENDPOINT = "https://huggingface.co"
+REPO = "deepseek-ai/DeepSeek-V4.1-Flash-1017"
 
 DTYPES = {
     "BF16": np.uint16, "F32": np.float32, "F16": np.float16, "I8": np.uint8,
@@ -25,45 +25,54 @@ def _session() -> requests.Session:
     return _local.s
 
 
-def url(path: str, repo: str = REPO) -> str:
-    return f"{ENDPOINT}/{repo}/resolve/main/{path}"
+ENDPOINTS = ["https://huggingface.co", "https://hf-mirror.com"]  # retries alternate between them
 
 
-PIECE = 32 << 20  # one HTTP request; long single transfers occasionally stall on the CDN
-MIN_RATE = 100 << 10  # bytes/s: only truly stuck transfers; a slow line must not abort every piece (livelock)
+def url(path: str, repo: str = REPO, endpoint: str = ENDPOINT) -> str:
+    return f"{endpoint}/{repo}/resolve/main/{path}"
 
 
-def _get_piece(path: str, start: int, end: int) -> bytes:
-    r = _session().get(url(path), headers={"Range": f"bytes={start}-{end - 1}"}, timeout=30, stream=True)
+PIECE = 32 << 20  # one HTTP request
+MIN_RATE = 100 << 10  # bytes/s: only truly stuck transfers (a slow line must not abort every piece)
+
+
+def _stream_into(buf: bytearray, path: str, start: int, end: int, endpoint: str) -> None:
+    """Append bytes [start, end) to buf; raises on a stall, keeping what arrived."""
+    r = _session().get(url(path, endpoint=endpoint), headers={"Range": f"bytes={start}-{end - 1}"}, timeout=30, stream=True)
     r.raise_for_status()
-    buf, t0 = bytearray(), time.time()
+    t0, n0 = time.time(), len(buf)
     for chunk in r.iter_content(1 << 20):
         buf += chunk
         dt = time.time() - t0
-        if dt > 30 and len(buf) / dt < MIN_RATE:
+        if dt > 30 and (len(buf) - n0) / dt < MIN_RATE:
             r.close()
-            raise IOError(f"stalled at {len(buf) / dt / 1e6:.2f} MB/s")
-    if len(buf) != end - start:
-        raise IOError(f"short read {len(buf)} != {end - start}")
-    return bytes(buf)
+            raise IOError(f"stalled at {(len(buf) - n0) / dt / 1e6:.2f} MB/s")
 
 
-def get_range(path: str, start: int, end: int, retries: int = 50) -> bytes:
-    """Bytes [start, end) of a repo file, in PIECE-sized requests, each retried with backoff."""
-    out = []
+def get_range(path: str, start: int, end: int, retries: int = 200) -> bytes:
+    """Bytes [start, end) of a repo file in PIECE-sized requests. A failed or stalled request
+    resumes from the last byte received (nothing is downloaded twice), on a fresh connection and
+    alternating endpoints."""
+    out = bytearray()
     for a in range(start, end, PIECE):
         b = min(end, a + PIECE)
+        piece = bytearray()
         for attempt in range(retries):
             try:
-                out.append(_get_piece(path, a, b))
+                _stream_into(piece, path, a + len(piece), b, ENDPOINTS[attempt % len(ENDPOINTS)])
+                if len(piece) != b - a:
+                    raise IOError(f"short read {len(piece)} != {b - a}")
                 break
             except Exception as e:  # noqa: BLE001 - network: anything retries
+                if len(piece) > b - a:
+                    piece = bytearray()  # a server ignored the range: start the piece over
                 if attempt == retries - 1:
                     raise
-                print(f"[hf] retry {attempt + 1} {path} [{a},{b}): {e}", flush=True)
-                _local.__dict__.pop("s", None)  # new connection: a stalled one tends to stay on a slow CDN node
-                time.sleep(min(30, 2**attempt))
-    return b"".join(out)
+                print(f"[hf] retry {attempt + 1} {path} [{a + len(piece)},{b}): {str(e)[:120]}", flush=True)
+                _local.__dict__.pop("s", None)  # new connection
+                time.sleep(min(20, 1 + attempt))
+        out += piece
+    return bytes(out)
 
 
 def fetch_headers(shards: list[str]) -> dict:
