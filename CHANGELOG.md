@@ -20,6 +20,8 @@ Apple Silicon Mac, developed and validated on a MacBook Air M4 with 24 GB.
 - SWA bounded replay (140-token suffix, DeepInfer's default), prefix reuse across chat turns.
 - DSpark speculative decoding with confidence-scheduled verification (opt-in).
 - Structured outputs (regex / JSON schema / EBNF via xgrammar).
+- Image input: MLX ViT + aligner with the official preprocessing, VL routing bias, image tokens
+  excluded from Engram; in the Python API, the chat CLI (`/img`) and the server.
 - OpenAI Chat Completions / Responses / Anthropic Messages server on deepseek-recipe.
 - Opt-in byte savers for SSD-bound machines: `--skip-miss`, `--prefill-topk`, `--lookahead`.
 

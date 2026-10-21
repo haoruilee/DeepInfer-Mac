@@ -30,6 +30,7 @@ DeepInfer-Mac 在一台 Apple Silicon Mac 上运行 **DeepSeek-V4.1-Flash**（75
 - SWA Bounded Replay
 - 多轮对话前缀复用
 - 结构化输出
+- 图像输入（ViT + aligner，VL 路由偏置）
 - 基于 [deepseek-recipe](https://github.com/deepseek-ai/deepseek-recipe) 的 OpenAI / Anthropic / Responses 兼容服务
 
 <details>
@@ -60,7 +61,6 @@ DeepInfer-Mac 在一台 Apple Silicon Mac 上运行 **DeepSeek-V4.1-Flash**（75
 相比 DeepInfer 未包含：
 
 - 多设备并行（Attention DP/CP、MoE EP + EPLB）、多请求 batch 不变性
-- 图像输入（视觉塔权重已转换，尚未接入）
 
 ## 快速开始
 
@@ -107,7 +107,7 @@ print(llm.tokenizer.decode([o.token_id for o in outputs[0]]))
 ### 对话与服务
 
 ```bash
-python -m deepinfer_mac chat [--think]      # 终端多轮对话
+python -m deepinfer_mac chat [--think]      # 终端多轮对话；图片用 /img photo.jpg <问题>
 python -m deepinfer_mac serve --port 8000   # /v1/chat/completions、/v1/responses、/v1/messages
 ```
 

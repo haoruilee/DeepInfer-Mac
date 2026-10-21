@@ -31,6 +31,7 @@ Supported features:
 - SWA bounded replay
 - Prefix reuse across chat turns
 - Structured outputs
+- Image input (ViT + aligner, VL routing bias)
 - OpenAI / Anthropic / Responses-compatible server on [deepseek-recipe](https://github.com/deepseek-ai/deepseek-recipe)
 
 <details>
@@ -67,7 +68,6 @@ Supported hardware:
 Not included (compared with DeepInfer):
 
 - Multi-device parallelism (Attention DP/CP, MoE EP + EPLB), batch-invariant multi-request batching
-- Vision input (the vision tower is converted but not wired in yet)
 
 ## Getting started
 
@@ -116,7 +116,7 @@ as in DeepInfer.
 ### Chat and server
 
 ```bash
-python -m deepinfer_mac chat [--think]      # multi-turn chat in the terminal
+python -m deepinfer_mac chat [--think]      # multi-turn chat; /img photo.jpg <question> for images
 python -m deepinfer_mac serve --port 8000   # /v1/chat/completions, /v1/responses, /v1/messages
 ```
 
