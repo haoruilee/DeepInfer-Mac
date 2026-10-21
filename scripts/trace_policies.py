@@ -1,6 +1,6 @@
 """Record the real routing trace of a decode run, then replay it against cache policies at the
 same capacity (in experts per slab) to pick the best one offline."""
-import collections, json, sys, time
+import collections, json, sys
 import numpy as np
 sys.path.insert(0, ".")
 if sys.argv[1:2] == ["record"]:
