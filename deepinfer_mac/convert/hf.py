@@ -25,10 +25,15 @@ def _session() -> requests.Session:
     return _local.s
 
 
-ENDPOINTS = ["https://huggingface.co", "https://hf-mirror.com"]  # every third retry goes to the mirror
+# Sources, in preference order. ModelScope hosts byte-identical shards (same size and sha256 for
+# all 48) on a CDN in China; from there it delivers full line speed without a proxy, where the
+# Hugging Face CDN can drop under 1 MB/s.
+ENDPOINTS = ["https://www.modelscope.cn", "https://huggingface.co"]
 
 
 def url(path: str, repo: str = REPO, endpoint: str = ENDPOINT) -> str:
+    if "modelscope" in endpoint:
+        return f"{endpoint}/models/{repo}/resolve/master/{path}"
     return f"{endpoint}/{repo}/resolve/main/{path}"
 
 
@@ -61,7 +66,7 @@ def get_range(path: str, start: int, end: int, retries: int = 200) -> bytes:
             if len(piece) == b - a:
                 break  # complete, even if the request that delivered the last bytes then failed
             try:
-                _stream_into(piece, path, a + len(piece), b, ENDPOINTS[1] if attempt % 3 == 2 else ENDPOINTS[0])
+                _stream_into(piece, path, a + len(piece), b, ENDPOINTS[1] if attempt % 3 == 2 else ENDPOINTS[0])  # fallback every third retry
                 if len(piece) != b - a:
                     raise IOError(f"short read {len(piece)} != {b - a}")
                 break
