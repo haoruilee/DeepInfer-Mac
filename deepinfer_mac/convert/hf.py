@@ -25,7 +25,7 @@ def _session() -> requests.Session:
     return _local.s
 
 
-ENDPOINTS = ["https://huggingface.co", "https://hf-mirror.com"]  # retries alternate between them
+ENDPOINTS = ["https://huggingface.co", "https://hf-mirror.com"]  # every third retry goes to the mirror
 
 
 def url(path: str, repo: str = REPO, endpoint: str = ENDPOINT) -> str:
@@ -61,7 +61,7 @@ def get_range(path: str, start: int, end: int, retries: int = 200) -> bytes:
             if len(piece) == b - a:
                 break  # complete, even if the request that delivered the last bytes then failed
             try:
-                _stream_into(piece, path, a + len(piece), b, ENDPOINTS[attempt % len(ENDPOINTS)])
+                _stream_into(piece, path, a + len(piece), b, ENDPOINTS[1] if attempt % 3 == 2 else ENDPOINTS[0])
                 if len(piece) != b - a:
                     raise IOError(f"short read {len(piece)} != {b - a}")
                 break
