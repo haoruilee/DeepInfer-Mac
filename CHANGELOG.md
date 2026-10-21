@@ -29,12 +29,19 @@ Apple Silicon Mac, developed and validated on a MacBook Air M4 with 24 GB.
 - Streams the 510 GB release from the Hub without storing it: range reads, GPU requantization,
   resumable per task. ModelScope (byte-identical shards) first, reached directly even behind a TUN
   proxy; Hugging Face as fallback. Stalled transfers resume from the last byte.
-- Weights: dense mxfp8 (bit-exact), experts 2/3/4-bit affine with a clipping search placed by layer
-  sensitivity, Engram 4-bit g32.
+- Weights: dense mxfp8 (bit-exact); experts 3-bit in 25 layers (0-3, 8, 14, 20-38), 4-bit in layer 39,
+  2/3-bit elsewhere, affine with a clipping search; Engram 4-bit g32. ~340 GB in total.
+
+**Measured on a MacBook Air M4, 24 GB**
+- Decode 1.25 tok/s; first token 10 s (short prompt) / ~49 s (1K) / ~8 min (16K).
+- Prefill expert compute as one quantized matmul per expert (1.67x over per-pair gather);
+  long-prompt prefill is now bound by the GPU's dense throughput (MXFP8 projections run within
+  ~15% of a bf16 GEMM of the same shape).
 
 **Validation**
 - Parity against the official PyTorch reference on random configurations covering every mechanism,
   and on the real converted layers (every layer ≥ 0.99997 cosine with activation rounding disabled).
 - DSpark drafts identical to the reference; greedy speculative decoding equals greedy decoding.
-- Scoring against continuations from the official API (teacher-forced NLL, top-1 agreement, and
-  long-context retrieval up to 16K tokens).
+- Against continuations sampled from the official API: 96.7% top-1 agreement over 17 cases; the
+  long-context retrieval answer is correct at every boundary from 127 to 16,385 tokens.
+- Vision tower identical to the reference in fp32; converted Engram rows within 0.64% of the originals.
