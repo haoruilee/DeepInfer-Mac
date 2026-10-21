@@ -8,7 +8,7 @@ import numpy as np, mlx.core as mx
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from deepinfer_mac import quant as Q
 from deepinfer_mac.convert import hf
-from deepinfer_mac.engine import LLM
+from deepinfer_mac.engine import build_chat
 from deepinfer_mac.model.model import Args, ExpertWeights, Transformer
 from deepinfer_mac.model.engram import NgramHasher
 from deepinfer_mac.weights import DiskWeights
@@ -42,7 +42,7 @@ a = Args.from_dict(cfg); a.n_layers = N
 w = DiskWeights(root, a.dim, a.engram_layer_ids, expert_budget=3 << 30)
 a.engram_layer_ids = tuple(l for l in a.engram_layer_ids if l < N)
 hasher = NgramHasher.load(a, root, cfg["engram_vocab_size"])
-ids, _, _ = LLM.chat_inputs(type("X", (), {"root": root})(), [{"role": "user", "content": "Explain in two sentences why rain leaves a fresh smell."}])
+ids, _, _ = build_chat(root, [{"role": "user", "content": "Explain in two sentences why rain leaves a fresh smell."}])
 toks = list(ids)
 
 def run(experts):

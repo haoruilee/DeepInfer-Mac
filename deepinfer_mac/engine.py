@@ -165,6 +165,18 @@ def encode_conversation(conversation, root: Path) -> tuple[list[int], list]:
     return ids, images
 
 
+def build_chat(root: Path, messages: list[dict], thinking: bool = False, **request):
+    """An OpenAI-style conversation rendered as DeepSeek's API renders it (deepseek-recipe):
+    -> (prompt ids, images in placeholder order, converted request)."""
+    from deepseek_recipe import ChatCompletionRequest, ConversionOptions, ModelVersion
+
+    body = {"model": "deepseek-flash", "messages": messages, "thinking": {"type": "enabled" if thinking else "disabled"}, **request}
+    conv = ChatCompletionRequest(json.dumps(body).encode()).convert(
+        ConversionOptions().with_model_alias("deepseek-flash", ModelVersion.DeepseekV41Flash)
+    )
+    return (*encode_conversation(conv.conversation, Path(root)), conv)
+
+
 # ------------------------------------------------------------------------------ engine
 
 
@@ -334,13 +346,7 @@ class LLM:
     def chat_inputs(self, messages: list[dict], thinking: bool = False, **request):
         """-> (prompt ids, images, converted request). Images are returned in placeholder order,
         ready for `stream(ids, sp, images)`."""
-        from deepseek_recipe import ChatCompletionRequest, ConversionOptions, ModelVersion
-
-        body = {"model": "deepseek-flash", "messages": messages, "thinking": {"type": "enabled" if thinking else "disabled"}, **request}
-        conv = ChatCompletionRequest(json.dumps(body).encode()).convert(
-            ConversionOptions().with_model_alias("deepseek-flash", ModelVersion.DeepseekV41Flash)
-        )
-        return (*encode_conversation(conv.conversation, self.root), conv)
+        return build_chat(self.root, messages, thinking, **request)
 
     def cached_prefix_len(self, prompt: list[int]) -> int:
         st = self._state

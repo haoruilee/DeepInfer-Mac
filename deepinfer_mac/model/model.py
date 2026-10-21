@@ -201,6 +201,22 @@ _expert_fns: dict = {}
 _ffn_fns: dict = {}
 
 
+def _per_expert_ffn(x, wk, slots, p1, p3, p2, limit, dtype):
+    """Prefill: pairs sorted by slot; one quantized_matmul per expert over its contiguous rows."""
+    slots = np.asarray(slots)
+    cuts = np.flatnonzero(np.diff(slots)) + 1
+    starts, ends = np.concatenate([[0], cuts]), np.concatenate([cuts, [len(slots)]])
+    lim = mx.array(limit, dtype=mx.float32)
+    outs = []
+    for a0, a1 in zip(starts.tolist(), ends.tolist()):
+        sl = int(slots[a0])
+        xe = x[a0:a1]
+        mm = lambda v, p: mx.quantized_matmul(v, p[0][sl], p[1][sl], p[2][sl], transpose=True, group_size=64, bits=p[3])
+        h = act_quant((wk[a0:a1] * _swiglu_c(mm(xe, p1), mm(xe, p3), lim)).astype(dtype))
+        outs.append(mm(h, p2).astype(mx.float32))
+    return outs[0] if len(outs) == 1 else mx.concatenate(outs)
+
+
 def _slab_ffn(xr, rhs, wk, limit, p1, p3, p2):
     """Routed SwiGLU over slab slots: three gather_qmm + activation, compiled as one graph."""
     g = mx.gather_qmm(xr, *p1[:3], rhs_indices=rhs, transpose=True, group_size=64, bits=p1[3], sorted_indices=True)
@@ -633,6 +649,10 @@ class MoE:
         xr = xq[r][:, None, None, :]  # [n, 1, 1, dim]
         q1, q3, q2 = slab.proj("w1"), slab.proj("w3"), slab.proj("w2")
         wk = w[r, mx.array(cols.astype(np.int32))].astype(mx.float32)[:, None, None, None]
+        if x.shape[0] > 1:  # prefill: each expert's rows as one matmul (1.67x vs per-pair gather_qmm)
+            pair_slots = [slot_of[e] for e in idx_np[rows, cols]]
+            o = _per_expert_ffn(xq[r], wk.reshape(-1, 1), pair_slots, q1, q3, q2, self.a.swiglu_limit, xq.dtype)
+            return y.at[r].add(o)
         key = (q1[3], q3[3], q2[3])
         f = _ffn_fns.get(key)
         if f is None:

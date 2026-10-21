@@ -4,10 +4,10 @@ sys.argv = [sys.argv[0], "6"]
 sys.path.insert(0, "scripts")
 import real_check as R
 from deepinfer_mac.model import model as M
-from deepinfer_mac.engine import LLM
+from deepinfer_mac.engine import build_chat
 mx.set_cache_limit(1 << 30)
 ours = R.build_ours(6)
-ids, _ = LLM.chat_prompt(type("X", (), {"root": R.ROOT})(), [{"role": "user", "content": "Write a short story about a lighthouse keeper who finds a message in a bottle."}])
+ids, _ = build_chat(R.ROOT, [{"role": "user", "content": "Write a short story about a lighthouse keeper who finds a message in a bottle."}])[:2]
 toks = list(ids)
 orig = M.Block.__call__
 BT = []

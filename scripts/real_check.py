@@ -229,9 +229,9 @@ def build_ours(n_layers):
 
 
 def main():
-    from deepinfer_mac.engine import LLM
+    from deepinfer_mac.engine import LLM, build_chat
 
-    ids, _ = LLM.chat_prompt(type("X", (), {"root": ROOT})(), [{"role": "user", "content": "用一句话介绍一下杭州。Then say it in English."}])
+    ids, _ = build_chat(ROOT, [{"role": "user", "content": "用一句话介绍一下杭州。Then say it in English."}])[:2]
     toks = list(ids)
     print(f"prompt: {len(toks)} tokens, first ids {toks[:8]}")
     if NOQUANT:

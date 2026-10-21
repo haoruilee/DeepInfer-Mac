@@ -12,7 +12,6 @@ the API's sampled continuation, and report
 
 import argparse
 import json
-import math
 import sys
 import time
 from pathlib import Path
