@@ -63,11 +63,29 @@ Supported features:
 
 Supported hardware:
 
-- Apple Silicon Macs (M1 or later), 24 GB of unified memory or more, ~350 GB of free SSD
+- Apple Silicon Macs (M1 or later), 24 GB of unified memory or more, ~360 GB of free SSD for the conversion
 
 Not included (compared with DeepInfer):
 
 - Multi-device parallelism (Attention DP/CP, MoE EP + EPLB), batch-invariant multi-request batching
+
+## What it looks like
+
+Real output of `python -m deepinfer_mac chat` on the MacBook Air M4 (24 GB), greedy decoding:
+
+```text
+you> 用一句话介绍一下杭州。
+ds>  杭州是中国浙江省的省会，以西湖美景、深厚的历史文化底蕴和蓬勃发展的数字经济而闻名。
+     [decode 1.23 tok/s]
+you> What is 17 * 23? Answer with the number only.
+ds>  391
+you> Write a haiku about the sea.
+ds>  Waves crash on the shore,
+     Salt and endless blue expanse,
+     Moon pulls the tide home.
+you> /img carrots.jpeg What is in this image? One sentence.
+ds>  A small pile of four fresh orange carrots with green stems rests on a white background.
+```
 
 ## Getting started
 
@@ -91,7 +109,7 @@ and writes it to its final place — the 510 GB release is never stored. It is r
 stalled transfers resume from the last byte and alternate between `huggingface.co` and `hf-mirror.com`.
 
 ```bash
-python -m deepinfer_mac convert --out ~/models/dsv41-mac   # ~345 GB written
+python -m deepinfer_mac convert --out ~/models/dsv41-mac   # ~340 GB written
 python -m deepinfer_mac doctor                             # progress, disk, memory, cache size
 ```
 
@@ -130,7 +148,7 @@ clients see the same API as DeepSeek's. See [examples/openai_client.py](examples
 | Dense: attention, shared experts, gates, mHC, Engram projections | FP8 e4m3, 32×32 E8M0 | MLX **mxfp8**, bit-exact | 7.7 GB | RAM |
 | Output head | BF16 | affine 8-bit | 0.7 GB | RAM |
 | Embedding | BF16 | BF16 (memory-mapped) | 1.3 GB | SSD |
-| Routed experts, 40 × 384 | FP4 e2m1 + E8M0/32 | affine g64 with clipping search: 3-bit for index-source and late layers, 4-bit for the last layer, 2-bit gate/up + 3-bit down elsewhere | ~210 GB | SSD |
+| Routed experts, 40 × 384 | FP4 e2m1 + E8M0/32 | affine g64 with clipping search: 3-bit in layers 0–3, 8, 14 and the decoder band 20–38; 4-bit in layer 39; 2-bit gate/up + 3-bit down in layers 4–7, 9–13, 15–19 | 213 GB | SSD |
 | DSpark draft experts, 3 × 128 | FP4 | 2-bit gate/up, 3-bit down | 4.8 GB | SSD |
 | Engram tables, 2 × 384M rows | FP8 + E8M0/32 | 4-bit g32 with clipping search, 160-byte rows | 123 GB | SSD |
 
@@ -138,46 +156,61 @@ Lossless experts (MXFP4, ~296 GB) are a one-line change in `deepinfer_mac/format
 
 ## Performance benchmarks
 
-MacBook Air M4, 24 GB, internal SSD:
+MacBook Air M4, 24 GB, internal SSD, macOS 26 — everything else closed:
 
 | | |
 | :--- | :--- |
-| SSD expert streaming | 2.8–3.15 GB/s; one layer's 6 experts in ~33 ms |
-| Decode (measured on the first converted layers, extrapolated to 40) | ~0.7 tok/s |
-| Time to first token on a fresh prompt | ~1 min (a 100-token prompt already routes to ~75% of all experts) |
+| Decode | **1.25 tok/s** (median of 3 runs; 0.80 s/token, of which 0.55 s is SSD wait) |
+| Time to first token: 14-token prompt / 1K / 16K | 10 s / ~49 s / ~8 min |
 | Follow-up chat turns | prefill only the new tokens |
+| SSD expert streaming | 2.8–3.15 GB/s; ~1.8 GB of expert reads per token at a 49% cache hit rate |
+| Resident memory | 7.7 GB dense weights + the expert cache (auto-sized) |
 
-Decode is bounded by SSD bandwidth: 40 layers × 6 experts × ~13 MB per token, minus cache hits. Full
-end-to-end numbers: `python -m deepinfer_mac bench`.
+Decode is bounded by SSD bandwidth: 40 layers × 6 experts × 12–20 MB per token, minus cache hits.
+Prefill streams the experts once per layer per chunk — even a short prompt routes to most of them.
+Reproduce with `python scripts/decode_speed.py --real-engram` and `python -m deepinfer_mac bench`.
 
 ## Tuning for your Mac
 
 | Flag | Default | Effect |
 | :--- | :--- | :--- |
-| `--cache-gb` | auto (free RAM − dense − 2.5 GB) | Expert cache size. The main decode lever: 1.5× capacity lifts the hit rate 0.38 → 0.47 on real routing traces. Close memory-heavy apps first. |
-| `--skip-miss 0.08` | off | Skip an uncached expert carrying < 8% of a token's routing weight (lossy). |
-| `--prefill-topk 4` | off | Route prompt tokens outside the last 140 to their top-4 experts: faster first token (lossy). |
-| `--lookahead K` | off | Prefetch the K most confident next-layer experts. Measured slower at K=6 when SSD-bound. |
+| `--cache-gb` | auto (free RAM − dense − 4 GB, keeping ≥ 9 GB for macOS) | Expert cache size — the main decode lever: 1.5× capacity lifts the hit rate 0.38 → 0.47 on real routing traces. Close memory-heavy apps first. |
+| `--skip-miss 0.08` | off | Skip an uncached expert carrying < 8% of a token's routing weight. Measured: +19% decode speed, top-1 agreement 91.2% → 88.8%. |
+| `--skip-miss 0.12` | off | +29% decode speed, agreement 88.8%, NLL +13%. |
+| `--prefill-topk 4` | off | Route prompt tokens outside the last 140 to their top-4 experts (lossy; helps only short-to-medium prompts). |
+| `--lookahead K` | off | Prefetch the K most confident next-layer experts. Measured 6% slower at K=2 on this SSD-bound machine; may help on faster SSDs. |
 | `--moe-topk N` | 6 | Experts per token for every token (lossy). |
-| `--spec` | off | DSpark speculative decoding. |
+| `--spec` | off | DSpark speculative decoding. Drafts are accepted 67% of the time, but verifying them streams the union of their experts: 0.35 tok/s here. Meant for Macs with enough RAM to cache experts. |
 
 See [docs/architecture.md](docs/architecture.md) for how the pieces fit together.
 
 ## Validation
 
-[`tests/`](tests) runs DeepSeek's official PyTorch `inference/model.py` — with CPU emulations of its
-TileLang kernels — as the oracle:
+**Against the official DeepSeek API.** Continuations sampled from DeepSeek's API (`deepseek-flash`,
+the V4.1 vectors published by [antirez/ds4](https://github.com/antirez/ds4)), teacher-forced through
+the converted model ([`scripts/score_api.py`](scripts/score_api.py)):
+
+| Cases | Top-1 agreement with the API | Notes |
+| :--- | :---: | :--- |
+| Prose, code, arithmetic, Italian (5) | 90.6% | short continuations; the gap is the 2/3-bit expert compression |
+| Needle retrieval at 127 / 128 / 129 / 511 / 512 / 513 / 1023 / 1024 / 1025 / 16383 / 16384 / 16385 tokens (12) | **100%** | answer `074` correct in all 12 — crosses the sliding window, compressed-key selection and the hierarchical candidate-block boundaries |
+| **All 17** | **96.7%** | mean NLL 0.127 (API 0.046) |
+
+**Against the official PyTorch reference.** [`tests/`](tests) runs DeepSeek's `inference/model.py` —
+with CPU emulations of its TileLang kernels — as the oracle:
 
 - **Model parity** (`test_parity.py`): prefill and 19 decode steps on small random configurations
   covering every mechanism. With activation rounding disabled on both sides, median logit cosine
-  ≥ 0.9999.
+  ≥ 0.9999; query-blocked indexer identical to the one-shot version.
+- **Vision** (`test_vision.py`): ViT + aligner identical in fp32 (cosine 1.0000000); multimodal
+  forward ≥ 0.9999.
 - **DSpark** (`test_dspark.py`): draft tokens identical to the reference `forward_spec`; greedy
   speculative decoding reproduces plain greedy decoding on both the reject and full-accept paths.
 - **Engine, store, server** (`test_engine.py`, `test_store.py`, `test_server.py`): the converted
-  on-disk format end to end, slab/LRU invariants, the HTTP API.
-- **Real weights** ([`scripts/real_check.py`](scripts/real_check.py)): the first converted layers of
-  the actual checkpoint against the reference on a real chat prompt — every layer ≥ 0.99997 cosine with
-  activation rounding disabled; Engram hash ids identical.
+  on-disk format end to end, slab/LRU invariants and regressions, the HTTP API.
+- **Real weights** ([`scripts/real_check.py`](scripts/real_check.py)): converted layers of the actual
+  checkpoint against the reference on a real chat prompt — every layer ≥ 0.99997 cosine with activation
+  rounding disabled; Engram hash ids identical; converted Engram rows within 0.64% of the originals.
 
 ```bash
 DSV41_REF=/path/to/DeepSeek-V4.1-Flash-1017/inference pytest tests/

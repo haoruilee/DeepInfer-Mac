@@ -56,11 +56,29 @@ DeepInfer-Mac 在一台 Apple Silicon Mac 上运行 **DeepSeek-V4.1-Flash**（75
 
 支持的硬件：
 
-- Apple Silicon Mac（M1 及以上），统一内存 ≥ 24 GB，SSD 空闲约 350 GB
+- Apple Silicon Mac（M1 及以上），统一内存 ≥ 24 GB，SSD 空闲约 360 GB（用于转换）
 
 相比 DeepInfer 未包含：
 
 - 多设备并行（Attention DP/CP、MoE EP + EPLB）、多请求 batch 不变性
+
+## 实际效果
+
+MacBook Air M4（24 GB）上 `python -m deepinfer_mac chat` 的真实输出（贪心解码）：
+
+```text
+you> 用一句话介绍一下杭州。
+ds>  杭州是中国浙江省的省会，以西湖美景、深厚的历史文化底蕴和蓬勃发展的数字经济而闻名。
+     [decode 1.23 tok/s]
+you> What is 17 * 23? Answer with the number only.
+ds>  391
+you> Write a haiku about the sea.
+ds>  Waves crash on the shore,
+     Salt and endless blue expanse,
+     Moon pulls the tide home.
+you> /img carrots.jpeg What is in this image? One sentence.
+ds>  A small pile of four fresh orange carrots with green stems rests on a white background.
+```
 
 ## 快速开始
 
@@ -83,7 +101,7 @@ uv pip install -e .
 可随时中断续传；卡住的传输从断点续传，并在 `huggingface.co` 与 `hf-mirror.com` 之间轮换。
 
 ```bash
-python -m deepinfer_mac convert --out ~/models/dsv41-mac   # 写入约 345 GB
+python -m deepinfer_mac convert --out ~/models/dsv41-mac   # 写入约 340 GB
 python -m deepinfer_mac doctor                             # 进度、磁盘、内存、缓存大小
 ```
 
@@ -121,7 +139,7 @@ python -m deepinfer_mac serve --port 8000   # /v1/chat/completions、/v1/respons
 | 稠密权重：注意力、共享专家、门控、mHC、Engram 投影 | FP8 e4m3，32×32 E8M0 | MLX **mxfp8**，比特级无损 | 7.7 GB | 内存 |
 | 输出头 | BF16 | affine 8-bit | 0.7 GB | 内存 |
 | 词嵌入 | BF16 | BF16（内存映射） | 1.3 GB | SSD |
-| 路由专家，40 × 384 | FP4 e2m1 + E8M0/32 | affine g64 + 裁剪搜索：index 源层与靠后层 3-bit，最后一层 4-bit，其余 gate/up 2-bit、down 3-bit | ~210 GB | SSD |
+| 路由专家，40 × 384 | FP4 e2m1 + E8M0/32 | affine g64 + 裁剪搜索：第 0–3、8、14 层及 decoder 区段 20–38 层 3-bit；第 39 层 4-bit；第 4–7、9–13、15–19 层 gate/up 2-bit、down 3-bit | 213 GB | SSD |
 | DSpark 草稿专家，3 × 128 | FP4 | gate/up 2-bit，down 3-bit | 4.8 GB | SSD |
 | Engram 表，2 × 3.84 亿行 | FP8 + E8M0/32 | 4-bit g32 + 裁剪搜索，每行 160 字节 | 123 GB | SSD |
 
@@ -129,38 +147,50 @@ python -m deepinfer_mac serve --port 8000   # /v1/chat/completions、/v1/respons
 
 ## 性能
 
-MacBook Air M4，24 GB，内置 SSD：
+MacBook Air M4，24 GB，内置 SSD，macOS 26，关闭其他应用：
 
 | | |
 | :--- | :--- |
-| SSD 专家流式读取 | 2.8–3.15 GB/s；单层 6 个专家约 33 ms |
-| Decode（在已转换的前几层上实测，外推到 40 层） | 约 0.7 tok/s |
-| 新 prompt 的首 token 延迟 | 约 1 分钟（100 token 的 prompt 已路由到约 75% 的专家） |
+| Decode | **1.25 tok/s**（3 次中位数；每 token 0.80 s，其中 0.55 s 等待 SSD） |
+| 首 token 延迟：14 token / 1K / 16K 的 prompt | 10 s / 约 49 s / 约 8 分钟 |
 | 多轮对话的后续轮次 | 只 prefill 新增 token |
+| SSD 专家流式读取 | 2.8–3.15 GB/s；缓存命中率 49% 时每 token 读取约 1.8 GB 专家 |
+| 常驻内存 | 7.7 GB 稠密权重 + 专家缓存（自动设定大小） |
 
-Decode 受 SSD 带宽限制：每个 token 需 40 层 × 6 个专家 × 约 13 MB，减去缓存命中。端到端数据：`python -m deepinfer_mac bench`。
+Decode 受 SSD 带宽限制：每个 token 需 40 层 × 6 个专家 × 12–20 MB，减去缓存命中。Prefill 每个 chunk 每层把用到的专家读一遍——即使很短的 prompt 也会用到大部分专家。
+复现：`python scripts/decode_speed.py --real-engram` 与 `python -m deepinfer_mac bench`。
 
 ## 针对你的 Mac 调优
 
 | 参数 | 默认 | 作用 |
 | :--- | :--- | :--- |
-| `--cache-gb` | 自动（空闲内存 − 稠密权重 − 2.5 GB） | 专家缓存大小，是 decode 速度的主要杠杆：容量提升 1.5 倍，真实路由轨迹上的命中率从 0.38 升到 0.47。建议先关闭占内存的应用。 |
-| `--skip-miss 0.08` | 关闭 | 未命中缓存且路由权重占比 < 8% 的专家直接跳过（有损）。 |
-| `--prefill-topk 4` | 关闭 | 最后 140 个 token 之外的 prompt token 只用 top-4 专家：首 token 更快（有损）。 |
-| `--lookahead K` | 关闭 | 预取下一层置信度最高的 K 个专家。SSD 受限时 K=6 实测更慢。 |
+| `--cache-gb` | 自动（空闲内存 − 稠密权重 − 4 GB，并为 macOS 保留 ≥ 9 GB） | 专家缓存大小，是 decode 速度的主要杠杆：容量提升 1.5 倍，真实路由轨迹上的命中率从 0.38 升到 0.47。建议先关闭占内存的应用。 |
+| `--skip-miss 0.08` | 关闭 | 未命中缓存且路由权重占比 < 8% 的专家直接跳过。实测：decode 快 19%，top-1 一致率 91.2% → 88.8%。 |
+| `--skip-miss 0.12` | 关闭 | decode 快 29%，一致率 88.8%，NLL +13%。 |
+| `--prefill-topk 4` | 关闭 | 最后 140 个 token 之外的 prompt token 只用 top-4 专家（有损；只对短到中等长度 prompt 有效）。 |
+| `--lookahead K` | 关闭 | 预取下一层置信度最高的 K 个专家。本机 SSD 受限，K=2 实测慢 6%；更快的 SSD 上可能有收益。 |
 | `--moe-topk N` | 6 | 所有 token 使用的专家数（有损）。 |
-| `--spec` | 关闭 | DSpark 投机解码。 |
+| `--spec` | 关闭 | DSpark 投机解码。草稿接受率 67%，但验证需流式读取多个 token 的专家并集：本机 0.35 tok/s。适合内存足以缓存专家的 Mac。 |
 
 各组件如何协同见 [docs/architecture.md](docs/architecture.md)。
 
 ## 验证
 
-[`tests/`](tests) 以 DeepSeek 官方 PyTorch `inference/model.py`（其 TileLang kernel 用 CPU 模拟）作为基准：
+**对齐 DeepSeek 官方 API。** 用 DeepSeek 官方 API（`deepseek-flash`）采样的续写（[antirez/ds4](https://github.com/antirez/ds4) 公开的 V4.1 测试向量），在转换后的模型上 teacher forcing（[`scripts/score_api.py`](scripts/score_api.py)）：
 
-- **模型对齐**（`test_parity.py`）：在覆盖全部机制的小规模随机配置上测试 prefill 与 19 步 decode；两侧关闭激活舍入时，logits 余弦相似度中位数 ≥ 0.9999。
+| 用例 | 与 API 的 top-1 一致率 | 说明 |
+| :--- | :---: | :--- |
+| 散文、代码、算术、意大利语（5） | 90.6% | 续写较短；差距来自 2/3-bit 专家压缩 |
+| 127 / 128 / 129 / 511 / 512 / 513 / 1023 / 1024 / 1025 / 16383 / 16384 / 16385 token 的大海捞针（12） | **100%** | 12 个答案 `074` 全部正确——跨越滑动窗口、压缩 key 选择与分层候选块边界 |
+| **全部 17 个** | **96.7%** | 平均 NLL 0.127（API 0.046） |
+
+**对齐官方 PyTorch 参考实现。** [`tests/`](tests) 以 DeepSeek 的 `inference/model.py`（TileLang kernel 用 CPU 模拟）为基准：
+
+- **模型对齐**（`test_parity.py`）：小规模随机配置上覆盖全部机制的 prefill 与 19 步 decode；两侧关闭激活舍入时 logits 余弦中位数 ≥ 0.9999；分块 indexer 与一次性计算完全一致。
+- **视觉**（`test_vision.py`）：ViT + aligner 在 fp32 下完全一致（余弦 1.0000000）；多模态前向 ≥ 0.9999。
 - **DSpark**（`test_dspark.py`）：草稿 token 与参考 `forward_spec` 完全一致；贪心投机解码在拒绝与全接受两条路径上都与普通贪心解码一致。
-- **引擎、存储、服务**（`test_engine.py`、`test_store.py`、`test_server.py`）：端到端的磁盘格式、slab/LRU 不变量、HTTP API。
-- **真实权重**（[`scripts/real_check.py`](scripts/real_check.py)）：用真实 checkpoint 已转换的前几层在真实对话 prompt 上与参考实现逐层比对——关闭激活舍入时每层余弦 ≥ 0.99997；Engram 哈希 id 完全一致。
+- **引擎、存储、服务**（`test_engine.py`、`test_store.py`、`test_server.py`）：端到端磁盘格式、slab/LRU 不变量与回归、HTTP API。
+- **真实权重**（[`scripts/real_check.py`](scripts/real_check.py)）：真实 checkpoint 的已转换层在真实对话上与参考实现逐层比对——关闭激活舍入时每层余弦 ≥ 0.99997；Engram 哈希 id 完全一致；转换后的 Engram 行与原始行误差 0.64%。
 
 ```bash
 DSV41_REF=/path/to/DeepSeek-V4.1-Flash-1017/inference pytest tests/
