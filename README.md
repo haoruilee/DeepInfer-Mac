@@ -149,6 +149,19 @@ MacBook Air M4, 24 GB, internal SSD:
 Decode is bounded by SSD bandwidth: 40 layers × 6 experts × ~13 MB per token, minus cache hits. Full
 end-to-end numbers: `python -m deepinfer_mac bench`.
 
+## Tuning for your Mac
+
+| Flag | Default | Effect |
+| :--- | :--- | :--- |
+| `--cache-gb` | auto (free RAM − dense − 2.5 GB) | Expert cache size. The main decode lever: 1.5× capacity lifts the hit rate 0.38 → 0.47 on real routing traces. Close memory-heavy apps first. |
+| `--skip-miss 0.08` | off | Skip an uncached expert carrying < 8% of a token's routing weight (lossy). |
+| `--prefill-topk 4` | off | Route prompt tokens outside the last 140 to their top-4 experts: faster first token (lossy). |
+| `--lookahead K` | off | Prefetch the K most confident next-layer experts. Measured slower at K=6 when SSD-bound. |
+| `--moe-topk N` | 6 | Experts per token for every token (lossy). |
+| `--spec` | off | DSpark speculative decoding. |
+
+See [docs/architecture.md](docs/architecture.md) for how the pieces fit together.
+
 ## Validation
 
 [`tests/`](tests) runs DeepSeek's official PyTorch `inference/model.py` — with CPU emulations of its

@@ -139,6 +139,19 @@ MacBook Air M4，24 GB，内置 SSD：
 
 Decode 受 SSD 带宽限制：每个 token 需 40 层 × 6 个专家 × 约 13 MB，减去缓存命中。端到端数据：`python -m deepinfer_mac bench`。
 
+## 针对你的 Mac 调优
+
+| 参数 | 默认 | 作用 |
+| :--- | :--- | :--- |
+| `--cache-gb` | 自动（空闲内存 − 稠密权重 − 2.5 GB） | 专家缓存大小，是 decode 速度的主要杠杆：容量提升 1.5 倍，真实路由轨迹上的命中率从 0.38 升到 0.47。建议先关闭占内存的应用。 |
+| `--skip-miss 0.08` | 关闭 | 未命中缓存且路由权重占比 < 8% 的专家直接跳过（有损）。 |
+| `--prefill-topk 4` | 关闭 | 最后 140 个 token 之外的 prompt token 只用 top-4 专家：首 token 更快（有损）。 |
+| `--lookahead K` | 关闭 | 预取下一层置信度最高的 K 个专家。SSD 受限时 K=6 实测更慢。 |
+| `--moe-topk N` | 6 | 所有 token 使用的专家数（有损）。 |
+| `--spec` | 关闭 | DSpark 投机解码。 |
+
+各组件如何协同见 [docs/architecture.md](docs/architecture.md)。
+
 ## 验证
 
 [`tests/`](tests) 以 DeepSeek 官方 PyTorch `inference/model.py`（其 TileLang kernel 用 CPU 模拟）作为基准：
