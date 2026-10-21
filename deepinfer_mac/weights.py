@@ -35,7 +35,18 @@ class DiskWeights:
         budget = expert_budget if expert_budget is not None else default_expert_budget(root)
         self.experts = ExpertStore(root, budget, io_threads)
         eg = layout.get("engram", {})
-        self.engram = SSDEngramTable(root, engram_layers, dim=eg.get("dim", 256), bits=eg.get("bits", 4), group=eg.get("group", 64)) if engram_layers else None
+        self.engram = None
+        if engram_layers:
+            done = (root / "progress.log").read_text().split() if (root / "progress.log").exists() else []
+            n_eg = sum(t.startswith("EG-") for t in done)
+            total = sum(-(-rows // (1 << 20)) for rows in json.loads((root / "inference_config.json").read_text())["engram_num_embeddings"])
+            if (root / "progress.log").exists() and n_eg < total:
+                from .model.engram import RemoteEngramTable
+
+                print(f"[weights] engram tables {n_eg}/{total} converted: reading rows from the Hub meanwhile", flush=True)
+                self.engram = RemoteEngramTable()
+            else:
+                self.engram = SSDEngramTable(root, engram_layers, dim=eg.get("dim", 256), bits=eg.get("bits", 4), group=eg.get("group", 64))
         self._embed = np.memmap(root / "embed.bf16", dtype=np.uint16, mode="r").reshape(-1, dim)
 
     def layer(self, i: int) -> dict:

@@ -204,3 +204,36 @@ class SSDEngramTable:
         b = mx.array(raw[:, qb + 2 * g :].copy()).view(mx.bfloat16)
         rows = mx.dequantize(q, s, b, group_size=self.group, bits=self.bits)
         return rows[mx.array(inv.astype(np.int32))].reshape(*ids.shape, self.dim)
+
+
+class RemoteEngramTable:
+    """Original fp8 Engram rows range-read from the Hub (ModelScope first) and cached in memory.
+    Lets the model run -- slowly, ~48 small requests per token -- before the 200 GB of local
+    tables finish converting. Used automatically while engram conversion is incomplete."""
+
+    def __init__(self, threads: int = 32):
+        import json as _json
+
+        from ..convert import hf
+        from .. import quant as Q
+
+        self.hf, self.Q = hf, Q
+        self.index = _json.loads((Path(__file__).parent.parent / "convert" / "tensor_index.json").read_text())
+        self.rows: dict[tuple[int, int], np.ndarray] = {}
+        self.pool = ThreadPoolExecutor(threads, thread_name_prefix="engram-remote")
+
+    def _fetch(self, layer: int, r: int) -> np.ndarray:
+        w = self.index[f"layers.{layer}.engram.embed.weight"]
+        s = self.index[f"layers.{layer}.engram.embed.scale"]
+        a = self.hf.get_range(w["shard"], w["start"] + r * 256, w["start"] + (r + 1) * 256)
+        b = self.hf.get_range(s["shard"], s["start"] + r * 8, s["start"] + (r + 1) * 8)
+        return np.concatenate([np.frombuffer(a, np.uint8), np.frombuffer(b, np.uint8)])
+
+    def lookup(self, layer_id: int, ids: np.ndarray) -> mx.array:
+        uniq, inv = np.unique(ids.reshape(-1), return_inverse=True)
+        need = [int(r) for r in uniq if (layer_id, int(r)) not in self.rows]
+        for r, v in zip(need, self.pool.map(lambda r: self._fetch(layer_id, r), need)):
+            self.rows[(layer_id, r)] = v
+        raw = np.stack([self.rows[(layer_id, int(r))] for r in uniq])
+        rows = self.Q.dequant_fp8_rowscale(mx.array(raw[:, :256].copy()), mx.array(raw[:, 256:].copy())).astype(mx.bfloat16)
+        return rows[mx.array(inv.astype(np.int32))].reshape(*ids.shape, 256)
