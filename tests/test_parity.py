@@ -293,3 +293,22 @@ def test_chunked_prefill_matches_full(models):
     cos, rel, top = _cmp(np.array(a), np.array(b))
     print(f"chunked: cos={cos:.6f} rel={rel:.4f}")
     assert cos > max(tol, 0.98) and top
+
+
+def test_blocked_indexer_matches_unblocked(models):
+    """Query-blocked indexer scoring (needed at long context) equals the one-shot version,
+    including the candidate-block mask handed to later layers."""
+    from deepinfer_mac.model.model import Attention
+
+    _, mm, _ = models
+    toks = np.random.default_rng(5).integers(100, 120000, size=48).tolist()
+    a = np.array(mm.forward(mm.new_state(), toks))
+    saved = Attention.INDEX_SCORE_BUDGET
+    Attention.INDEX_SCORE_BUDGET = 1  # one query per block
+    try:
+        b = np.array(mm.forward(mm.new_state(), toks))
+    finally:
+        Attention.INDEX_SCORE_BUDGET = saved
+    cos, rel, top = _cmp(a, b)
+    print(f"blocked indexer: cos={cos:.7f}")
+    assert cos > 0.99999 and top

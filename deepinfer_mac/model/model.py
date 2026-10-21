@@ -304,6 +304,8 @@ class Shared:
 
 
 class Attention:
+    INDEX_SCORE_BUDGET = 1 << 27  # elements of the [rows, heads, T] indexer score per query block
+
     def __init__(self, a: Args, layer_id: int, d: dict, is_backbone: bool = True):
         self.a, self.layer_id = a, layer_id
         self.ratio = a.compress_ratios[layer_id]
@@ -374,28 +376,46 @@ class Attention:
         q = fp4_act_quant(rope_tail(q, self.rope.cos_sin(positions), rd))
         visible = (positions + 1) // r  # compressed positions each query may see
         T = end // r
-        index_k = sh.index_k.view(T)
+        index_k = sh.index_k.view(T).astype(mx.float32)
+        w = (self.i_weights_proj(x).astype(mx.float32) * (a.index_head_dim**-0.5 * a.index_n_heads**-0.5)).astype(mx.bfloat16)
+        # query blocks keep the [rows, heads, T] score tensor near 512 MB at long context
+        QB = max(1, self.INDEX_SCORE_BUDGET // (a.index_n_heads * max(T, 1)))
+        outs, cands = [], []
+        for b0 in range(0, L, QB):
+            b1 = min(L, b0 + QB)
+            idx, cand = self._index_block(q[b0:b1], w[b0:b1], visible[b0:b1], index_k, T, sh, b0, b1)
+            outs.append(idx)
+            if cand is not None:
+                cands.append(cand)
+        if cands:
+            sh.candidates = cands[0] if len(cands) == 1 else mx.concatenate(cands)
+        return outs[0] if len(outs) == 1 else mx.concatenate(outs)
+
+    def _index_block(self, q, w, visible, index_k, T, sh: Shared, b0: int, b1: int):
+        a = self.a
         # bf16 roundings at the same points as the reference's torch ops, so near-ties in the
         # top-k resolve the same way
         bf = mx.bfloat16
-        w = (self.i_weights_proj(x).astype(mx.float32) * (a.index_head_dim**-0.5 * a.index_n_heads**-0.5)).astype(bf)
-        score = mx.einsum("lhd,td->lht", q.astype(mx.float32), index_k.astype(mx.float32)).astype(bf)
+        score = mx.einsum("lhd,td->lht", q.astype(mx.float32), index_k).astype(bf)
         score = (mx.maximum(score, 0) * w[..., None]).astype(bf)
-        score = score.astype(mx.float32).sum(axis=1).astype(bf).astype(mx.float32)  # [L, T]
+        score = score.astype(mx.float32).sum(axis=1).astype(bf).astype(mx.float32)  # [rows, T]
         reach = mx.arange(T)[None, :] < visible[:, None]
         score = mx.where(reach, score, -mx.inf)
+        cand = None
         if self.is_candidate_source:
-            sh.candidates = select_candidate_blocks(score, visible, a.candidate_topk_blocks, a.candidate_block_size)
+            cand = select_candidate_blocks(score, visible, a.candidate_topk_blocks, a.candidate_block_size)
         elif self.uses_candidates:
-            score = mx.where(sh.candidates, score, -mx.inf)
+            score = mx.where(sh.candidates[b0:b1], score, -mx.inf)
+        n = q.shape[0]
         k = min(a.index_topk, T)
-        idx = mx.argpartition(-score, kth=k - 1, axis=-1)[:, :k] if k < T else mx.broadcast_to(mx.arange(T), (L, T))
+        idx = mx.argpartition(-score, kth=k - 1, axis=-1)[:, :k] if k < T else mx.broadcast_to(mx.arange(T), (n, T))
         idx = mx.sort(idx.astype(mx.int32), axis=-1)
         ok = mx.take_along_axis(score, idx, axis=-1) > -mx.inf
         idx = mx.where(ok & (idx < visible[:, None]), idx, -1).astype(mx.int32)
         if k < a.index_topk:  # fixed width keeps the attention kernel's shapes constant
-            idx = mx.concatenate([idx, mx.full((L, a.index_topk - k), -1, dtype=mx.int32)], axis=-1)
-        return idx
+            idx = mx.concatenate([idx, mx.full((n, a.index_topk - k), -1, dtype=mx.int32)], axis=-1)
+        mx.eval(idx, *(() if cand is None else (cand,)))
+        return idx, cand
 
     # -- forward
 
