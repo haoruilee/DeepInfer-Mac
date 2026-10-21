@@ -502,7 +502,11 @@ def select_candidate_blocks(logits: mx.array, visible: mx.array, topk_blocks: in
 class MoE:
     EXPERT_BATCH = 16  # x6 must fit the smallest slab (96 slots): pins of two calls + this batch + a prefetched one
     OVERLAP = True  # decode: compute resident experts while the misses load
-    LOOKAHEAD = False  # measured no gain when SSD-bound; flash-moe saw speculative routing cost 38%
+    LOOKAHEAD = False
+    LOOKAHEAD_K = 0  # 0 = all predicted experts
+    SKIP_MISS_BELOW = 0.0  # opt-in, see _prune
+    PREFILL_TOPK = 0  # opt-in, see _prune
+    PREFILL_KEEP = 140  # measured no gain when SSD-bound; flash-moe saw speculative routing cost 38%
     next_moe = None
 
     def __init__(self, a: Args, layer_id: int, d: dict, experts, key: str):
@@ -525,12 +529,42 @@ class MoE:
         y = w2(swiglu(w1(x), w3(x), self.a.swiglu_limit).astype(x.dtype)).astype(mx.float32)
         return w * self.a.route_scale, idx, xq, y
 
+    def _prune(self, x, w, idx_np):
+        """Opt-in byte savers for SSD-bound runs. Both renormalize the surviving routing weights to
+        the original sum and mark dropped (token, expert) pairs with -1.
+          PREFILL_TOPK: prompt tokens before the last PREFILL_KEEP keep only their top-k experts
+            (the last tokens -- those the decoder replays -- keep all of them).
+          SKIP_MISS_BELOW: at decode, an expert that is not cached and carries less than this share
+            of the token's routing weight is skipped instead of read."""
+        L = x.shape[0]
+        drop = np.zeros(idx_np.shape, dtype=bool)
+        if L > 1 and self.PREFILL_TOPK and self.PREFILL_TOPK < idx_np.shape[1]:
+            wn = np.array(w.astype(mx.float32))
+            rank = np.argsort(np.argsort(-wn, axis=1), axis=1)
+            early = np.arange(L)[:, None] < L - self.PREFILL_KEEP
+            drop |= early & (rank >= self.PREFILL_TOPK)
+        if L == 1 and self.SKIP_MISS_BELOW > 0 and hasattr(self.experts, "resident"):
+            wn = np.array(w.astype(mx.float32))[0]
+            share = wn / wn.sum()
+            order = np.argsort(share)  # skip at most one expert per token: the weakest miss
+            for j in order[:1]:
+                if share[j] < self.SKIP_MISS_BELOW and not self.experts.resident(self.key, int(idx_np[0, j])):
+                    drop[0, j] = True
+        if not drop.any():
+            return w, idx_np
+        keep = mx.array(~drop)
+        w2 = mx.where(keep, w, 0.0)
+        w2 = w2 * (w.sum(-1, keepdims=True) / mx.maximum(w2.sum(-1, keepdims=True), 1e-20))
+        idx2 = idx_np.copy()
+        idx2[drop] = -1
+        return w2, idx2
+
     def _slab_moe(self, x, xq, w, idx_np, y):
         """All (token, expert) pairs of a layer through one gather_qmm per projection, over the
         store's slab slots. Decode starts every read, computes the experts already resident while
         the misses land, then the misses. Prefill works through the experts in batches so the
         working set stays within the slab; each batch's reads overlap the previous batch's compute."""
-        ids = np.unique(idx_np).tolist()
+        ids = [e for e in np.unique(idx_np).tolist() if e >= 0]
         if x.shape[0] == 1 and self.OVERLAP:
             self.experts.prefetch(self.key, ids)
             hits = [e for e in ids if self.experts.resident(self.key, e)]
@@ -584,12 +618,16 @@ class MoE:
             # router lookahead: the next layer's gate on this layer's input predicts most of its
             # experts; reading them now overlaps the SSD with this layer's and the next attention's
             # compute
-            pred = mx.argpartition(-(x[-1:].astype(mx.float32) @ nxt.gate_w.T + nxt.bias), kth=nxt.topk - 1, axis=-1)[:, : nxt.topk]
+            # LOOKAHEAD_K: prefetch only the k most confident predictions (mispredictions cost reads)
+            k = min(self.LOOKAHEAD_K or nxt.topk, nxt.topk)
+            sc = x[-1:].astype(mx.float32) @ nxt.gate_w.T + nxt.bias
+            pred = mx.argpartition(-sc, kth=k - 1, axis=-1)[:, :k]
             idx_np, pred_np = (np.array(a) for a in (idx, pred))
             self.experts.prefetch(nxt.key, pred_np[0].tolist(), optional=True)
         else:
             idx_np = np.array(idx)  # the one host sync per layer: which experts to fetch
         if hasattr(self.experts, "get_slots"):
+            w, idx_np = self._prune(x, w, idx_np)
             return self._slab_moe(x, xq, w, idx_np, y)
         if x.shape[0] == 1:  # decode: every routed expert sees the single token
             order = np.argsort(idx_np[0], kind="stable")  # ascending expert id, as in the prefill path

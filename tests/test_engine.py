@@ -83,3 +83,26 @@ def test_structured_regex(setup):
     text = "".join(o.text for o in llm.stream([0, 1000, 2000], sp))
     print("constrained:", repr(text))
     assert re.fullmatch(r"[0-9]{3}-[a-z]{2}(<｜end▁of▁sentence｜>)?", text)
+
+
+def test_byte_saver_knobs(setup):
+    """PREFILL_TOPK / SKIP_MISS_BELOW / LOOKAHEAD_K run end to end and stay close to the exact
+    model (tiny model: top-2 of 8, so effects are large; this guards plumbing, not quality)."""
+    from deepinfer_mac.model.model import MoE
+
+    _, llm = setup
+    p = np.random.default_rng(11).integers(100, 120000, size=40).tolist()
+    sp = SamplingParams(temperature=0, max_tokens=6, ignore_eos=True)
+    llm.reset()
+    base = [o.token_id for o in llm.stream(p, sp)]
+    saved = (MoE.PREFILL_TOPK, MoE.PREFILL_KEEP, MoE.SKIP_MISS_BELOW, MoE.LOOKAHEAD, MoE.LOOKAHEAD_K)
+    try:
+        MoE.PREFILL_TOPK, MoE.PREFILL_KEEP = 1, 8
+        MoE.SKIP_MISS_BELOW = 0.45
+        MoE.LOOKAHEAD, MoE.LOOKAHEAD_K = True, 1
+        llm.reset()
+        out = [o.token_id for o in llm.stream(p, sp)]
+    finally:
+        MoE.PREFILL_TOPK, MoE.PREFILL_KEEP, MoE.SKIP_MISS_BELOW, MoE.LOOKAHEAD, MoE.LOOKAHEAD_K = saved
+    print("exact", base, "with byte savers", out)
+    assert len(out) == 6

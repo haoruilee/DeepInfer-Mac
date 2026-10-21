@@ -16,7 +16,11 @@ from .engine import DEFAULT_MODEL_DIR
 
 def _llm(a):
     from .engine import LLM
+    from .model.model import MoE
 
+    MoE.SKIP_MISS_BELOW = a.skip_miss
+    MoE.PREFILL_TOPK = a.prefill_topk
+    MoE.LOOKAHEAD, MoE.LOOKAHEAD_K = a.lookahead > 0, a.lookahead
     return LLM(a.model, expert_cache_gb=a.cache_gb, speculative=a.spec or None, moe_topk=a.moe_topk)
 
 
@@ -87,6 +91,9 @@ def main(argv=None):
         p.add_argument("--cache-gb", type=float, default=None, help="expert cache size (default: free RAM after dense weights - 7 GB)")
         p.add_argument("--spec", action="store_true", help="DSpark speculative decoding")
         p.add_argument("--moe-topk", type=int, default=None, help="experts per token (model: 6); fewer = faster, lossy")
+        p.add_argument("--skip-miss", type=float, default=0.0, help="skip a non-cached expert under this routing-weight share (e.g. 0.08); lossy")
+        p.add_argument("--prefill-topk", type=int, default=0, help="experts per prompt token outside the last 140 (e.g. 4); faster TTFT, lossy")
+        p.add_argument("--lookahead", type=int, default=0, help="prefetch the k most confident next-layer experts (0 = off)")
         if name == "chat":
             p.add_argument("--think", action="store_true")
             p.add_argument("--temperature", type=float, default=0.6)
