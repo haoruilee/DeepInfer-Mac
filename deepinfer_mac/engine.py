@@ -334,7 +334,7 @@ class LLM:
     def chat_inputs(self, messages: list[dict], thinking: bool = False, **request):
         """-> (prompt ids, images, converted request). Images are returned in placeholder order,
         ready for `stream(ids, sp, images)`."""
-        from deepseek_recipe import ChatCompletionRequest, ConversionOptions, DeepseekV41Encoding, ModelVersion
+        from deepseek_recipe import ChatCompletionRequest, ConversionOptions, ModelVersion
 
         body = {"model": "deepseek-flash", "messages": messages, "thinking": {"type": "enabled" if thinking else "disabled"}, **request}
         conv = ChatCompletionRequest(json.dumps(body).encode()).convert(

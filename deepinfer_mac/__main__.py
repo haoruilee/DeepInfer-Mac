@@ -80,8 +80,6 @@ def serve(a):
 
 
 def bench(a):
-    import numpy as np
-
     from .engine import SamplingParams
 
     llm = _llm(a)
@@ -90,7 +88,8 @@ def bench(a):
     for rnd in range(a.rounds):
         llm.reset()
         t = time.perf_counter()
-        n = sum(1 for _ in llm.stream(ids, SamplingParams(temperature=0, max_tokens=a.gen, ignore_eos=True)))
+        for _ in llm.stream(ids, SamplingParams(temperature=0, max_tokens=a.gen, ignore_eos=True)):
+            pass
         print(json.dumps({"round": rnd, **llm.last_stats, "wall_s": round(time.perf_counter() - t, 1)}), flush=True)
 
 

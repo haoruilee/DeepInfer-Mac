@@ -6,9 +6,7 @@ forward pass and the table rows can be fetched from SSD while the first layers r
 
 from __future__ import annotations
 
-import json
 import os
-import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 

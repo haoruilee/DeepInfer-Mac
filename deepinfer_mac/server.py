@@ -10,10 +10,8 @@ state when its prompt extends it.
 from __future__ import annotations
 
 import asyncio
-import json
 import threading
 from collections.abc import AsyncIterator
-from pathlib import Path
 from time import time
 from uuid import uuid4
 
@@ -22,7 +20,6 @@ from deepseek_recipe import (
     ChatCompletionResponse,
     ConversionError,
     ConversionOptions,
-    DeepseekV41Encoding,
     InferenceChunk,
     InferenceFinishReason,
     MessagesRequest,

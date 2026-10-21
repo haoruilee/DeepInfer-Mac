@@ -12,7 +12,6 @@ Routed experts never live in this module: `Weights.experts.get(layer_key, ids)` 
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 
 import mlx.core as mx
