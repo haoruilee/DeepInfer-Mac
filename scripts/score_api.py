@@ -76,8 +76,13 @@ def main():
             print(f"{cid}: {len(ids)} tokens, unmapped {bad}, round-trip text identical: {same}")
         return
 
-    from deepinfer_mac.engine import LLM
+    import os
 
+    from deepinfer_mac.engine import LLM
+    from deepinfer_mac.model.model import MoE
+
+    MoE.SKIP_MISS_BELOW = float(os.environ.get("SKIP_MISS", "0"))
+    MoE.PREFILL_TOPK = int(os.environ.get("PREFILL_TOPK", "0"))
     llm = LLM(root)
     rows = []
     for cid, prompt, resp in cases:
