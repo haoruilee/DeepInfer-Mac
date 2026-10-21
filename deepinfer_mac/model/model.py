@@ -188,6 +188,16 @@ def run_expert(xq: mx.array, e: ExpertWeights, weights: mx.array | None, limit: 
 
 
 _expert_fns: dict = {}
+_ffn_fns: dict = {}
+
+
+def _slab_ffn(xr, rhs, wk, limit, p1, p3, p2):
+    """Routed SwiGLU over slab slots: three gather_qmm + activation, compiled as one graph."""
+    g = mx.gather_qmm(xr, *p1[:3], rhs_indices=rhs, transpose=True, group_size=64, bits=p1[3], sorted_indices=True)
+    u = mx.gather_qmm(xr, *p3[:3], rhs_indices=rhs, transpose=True, group_size=64, bits=p3[3], sorted_indices=True)
+    h = act_quant((wk * _swiglu_c(g, u, limit)).astype(xr.dtype))
+    o = mx.gather_qmm(h, *p2[:3], rhs_indices=rhs, transpose=True, group_size=64, bits=p2[3], sorted_indices=True)
+    return o.reshape(-1, o.shape[-1]).astype(mx.float32)
 
 
 def _expert(xq, w, limit, p1, p3, p2):
@@ -592,12 +602,13 @@ class MoE:
         r = mx.array(rows.astype(np.int32))
         xr = xq[r][:, None, None, :]  # [n, 1, 1, dim]
         q1, q3, q2 = slab.proj("w1"), slab.proj("w3"), slab.proj("w2")
-        g = mx.gather_qmm(xr, *q1[:3], rhs_indices=rhs, transpose=True, group_size=64, bits=q1[3], sorted_indices=True)
-        u = mx.gather_qmm(xr, *q3[:3], rhs_indices=rhs, transpose=True, group_size=64, bits=q3[3], sorted_indices=True)
         wk = w[r, mx.array(cols.astype(np.int32))].astype(mx.float32)[:, None, None, None]
-        h = act_quant((wk * swiglu(g, u, self.a.swiglu_limit)).astype(x.dtype))
-        o = mx.gather_qmm(h, *q2[:3], rhs_indices=rhs, transpose=True, group_size=64, bits=q2[3], sorted_indices=True)
-        o = o.reshape(-1, o.shape[-1]).astype(mx.float32)
+        key = (q1[3], q3[3], q2[3])
+        f = _ffn_fns.get(key)
+        if f is None:
+            f = _ffn_fns[key] = mx.compile(lambda xr, rhs, wk, lim, a1, b1, c1, a3, b3, c3, a2, b2, c2: _slab_ffn(
+                xr, rhs, wk, lim, (a1, b1, c1, key[0]), (a3, b3, c3, key[1]), (a2, b2, c2, key[2])))
+        o = f(xr, rhs, wk, mx.array(self.a.swiglu_limit, dtype=mx.float32), *q1[:3], *q3[:3], *q2[:3])
         return y + o.sum(axis=0, keepdims=True) if x.shape[0] == 1 else y.at[r].add(o)
 
     def route(self, x: mx.array, image_mask: mx.array | None = None):

@@ -202,6 +202,7 @@ def _no_quant(enable: bool):
 
     saved = (ref.act_quant, ref.fp4_act_quant, ref.fp8_gemm, ref.fp4_gemm, M.act_quant, M.fp4_act_quant)
     M._expert_fns.clear()  # compiled functions bake in whichever act_quant was live when traced
+    M._ffn_fns.clear()
     if not enable:
         return saved
 
@@ -228,6 +229,7 @@ def _restore(saved):
 
     ref.act_quant, ref.fp4_act_quant, ref.fp8_gemm, ref.fp4_gemm, M.act_quant, M.fp4_act_quant = saved
     M._expert_fns.clear()
+    M._ffn_fns.clear()
 
 
 @pytest.fixture(scope="module", params=list(CONFIGS))
