@@ -84,6 +84,7 @@ uv pip install -e .
 
 ```bash
 python -m deepinfer_mac convert --out ~/models/dsv41-mac   # 写入约 345 GB
+python -m deepinfer_mac doctor                             # 进度、磁盘、内存、缓存大小
 ```
 
 ### 离线推理

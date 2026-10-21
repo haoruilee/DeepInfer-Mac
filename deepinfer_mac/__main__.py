@@ -4,6 +4,7 @@
   python -m deepinfer_mac chat [--think]                         # interactive multi-turn chat
   python -m deepinfer_mac serve [--port 8000]                    # OpenAI/Anthropic-compatible API
   python -m deepinfer_mac bench [--prompt-len 512 --gen 64]      # throughput numbers
+  python -m deepinfer_mac doctor                                 # readiness + conversion status
 """
 
 import argparse
@@ -105,10 +106,18 @@ def main(argv=None):
             p.add_argument("--prompt-len", type=int, default=256)
             p.add_argument("--gen", type=int, default=32)
             p.add_argument("--rounds", type=int, default=2)
+    d = sub.add_parser("doctor")
+    d.add_argument("--model", default=str(DEFAULT_MODEL_DIR))
     c = sub.add_parser("convert")
     c.add_argument("--out", default=str(DEFAULT_MODEL_DIR))
     c.add_argument("--workers", type=int, default=6)
     a = ap.parse_args(argv)
+    if a.cmd == "doctor":
+        from pathlib import Path
+
+        from .doctor import main as doctor
+
+        return doctor(Path(a.model).expanduser())
     if a.cmd == "convert":
         from .convert.remote import main as conv
 

@@ -92,6 +92,7 @@ stalled transfers resume from the last byte and alternate between `huggingface.c
 
 ```bash
 python -m deepinfer_mac convert --out ~/models/dsv41-mac   # ~345 GB written
+python -m deepinfer_mac doctor                             # progress, disk, memory, cache size
 ```
 
 ### Offline inference
