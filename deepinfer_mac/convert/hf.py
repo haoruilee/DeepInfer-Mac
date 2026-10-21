@@ -18,6 +18,73 @@ DTYPES = {
 
 _local = threading.local()
 
+# --- direct routing for China-hosted mirrors -------------------------------------------------
+# A system-wide proxy in TUN mode (e.g. Clash) captures every socket and answers DNS with fake
+# IPs. ModelScope is reachable directly from mainland China at full line speed, so for its hosts
+# we resolve through a public resolver and bind the socket to the physical interface: that
+# traffic bypasses the proxy (and its metered node). Everything else is left untouched.
+DIRECT_SUFFIXES = (".modelscope.cn",)
+DIRECT_DNS = "223.5.5.5"
+_dns_cache: dict[str, tuple[str, float]] = {}
+
+
+def _physical_interface() -> str | None:
+    import subprocess
+
+    try:
+        out = subprocess.run(["route", "-n", "get", "default"], capture_output=True, text=True, timeout=5).stdout
+        for line in out.splitlines():
+            if "interface:" in line:
+                name = line.split()[-1]
+                return None if name.startswith("utun") else name
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def _resolve_direct(host: str) -> str:
+    import subprocess
+
+    hit = _dns_cache.get(host)
+    if hit and time.time() - hit[1] < 300:
+        return hit[0]
+    out = subprocess.run(["dig", "+short", "+time=3", f"@{DIRECT_DNS}", host, "A"], capture_output=True, text=True, timeout=10).stdout
+    ips = [l for l in out.split() if l.count(".") == 3 and l.replace(".", "").isdigit()]
+    if not ips:
+        raise OSError(f"direct DNS failed for {host}")
+    _dns_cache[host] = (ips[0], time.time())
+    return ips[0]
+
+
+def _install_direct_routing():
+    import socket
+
+    import urllib3.util.connection as uconn
+
+    iface = _physical_interface()
+    if iface is None:
+        return
+    ifindex = socket.if_nametoindex(iface)
+    orig = uconn.create_connection
+
+    def create_connection(address, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, source_address=None, socket_options=None):
+        host, port = address
+        if not host.endswith(DIRECT_SUFFIXES):
+            return orig(address, timeout, source_address, socket_options)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setsockopt(socket.IPPROTO_IP, 25, ifindex)  # IP_BOUND_IF: leave via the physical NIC
+        for opt in socket_options or []:
+            sock.setsockopt(*opt)
+        if timeout is not socket._GLOBAL_DEFAULT_TIMEOUT:
+            sock.settimeout(timeout)
+        sock.connect((_resolve_direct(host), port))
+        return sock
+
+    uconn.create_connection = create_connection
+
+
+_install_direct_routing()
+
 
 def _session() -> requests.Session:
     if not hasattr(_local, "s"):
