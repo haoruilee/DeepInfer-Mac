@@ -95,7 +95,10 @@ def main():
         t = time.time()
         st, logits, _, _ = llm._prefill(pids, want_hidden=False)
         first = np.array(logits[-1], dtype=np.float64)
-        rest = np.array(llm.model.forward(st, ids[:-1], all_logits=True), dtype=np.float64) if len(ids) > 1 else np.zeros((0, first.size))
+        if os.environ.get("STEPWISE") == "1":  # one token at a time, like decoding (decode-time knobs act)
+            rest = np.array([np.array(llm.model.forward(st, [t])[-1], dtype=np.float64) for t in ids[:-1]]).reshape(-1, first.size)
+        else:
+            rest = np.array(llm.model.forward(st, ids[:-1], all_logits=True), dtype=np.float64) if len(ids) > 1 else np.zeros((0, first.size))
         allg = np.vstack([first[None], rest])
         lse = np.log(np.exp(allg - allg.max(1, keepdims=True)).sum(1)) + allg.max(1)
         ours = -(allg[np.arange(len(ids)), ids] - lse)
