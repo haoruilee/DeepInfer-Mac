@@ -500,7 +500,7 @@ def select_candidate_blocks(logits: mx.array, visible: mx.array, topk_blocks: in
 
 
 class MoE:
-    EXPERT_BATCH = 32
+    EXPERT_BATCH = 16  # x6 must fit the smallest slab (96 slots): pins of two calls + this batch + a prefetched one
     LOOKAHEAD = False  # measured no gain when SSD-bound; flash-moe saw speculative routing cost 38%
     next_moe = None
 

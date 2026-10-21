@@ -51,3 +51,19 @@ def test_optional_prefetch_never_breaks_requests(store):
     for i in range(50):
         s.prefetch("L00", [(i * 7 + j) % 64 for j in range(30)], optional=True)
         _check(s, data, lay, "L00", [(i * 5 + j) % 64 for j in range(6)])
+
+
+def test_prefill_batches_fit_minimum_slab(store):
+    """Expert-major prefill: batches of EXPERT_BATCH with the next batch prefetched (optional),
+    as MoE._slab_moe does, over every expert -- must never exhaust a minimum-size slab."""
+    from deepinfer_mac.model.model import MoE
+
+    s, data, lay = store
+    B = MoE.EXPERT_BATCH
+    for rep in range(3):
+        ids = list(range(64))
+        batches = [ids[i : i + B] for i in range(0, len(ids), B)]
+        for bi, batch in enumerate(batches):
+            if bi + 1 < len(batches):
+                s.prefetch("L00", batches[bi + 1], optional=True)
+            _check(s, data, lay, "L00", batch)
