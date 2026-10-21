@@ -526,33 +526,42 @@ class MoE:
 
     def _slab_moe(self, x, xq, w, idx_np, y):
         """All (token, expert) pairs of a layer through one gather_qmm per projection, over the
-        store's slab slots. Prefill works through the experts in batches so the working set stays
-        within the slab; each batch's reads overlap the previous batch's compute."""
+        store's slab slots. Decode starts every read, computes the experts already resident while
+        the misses land, then the misses. Prefill works through the experts in batches so the
+        working set stays within the slab; each batch's reads overlap the previous batch's compute."""
         ids = np.unique(idx_np).tolist()
-        B = len(ids) if x.shape[0] == 1 else self.EXPERT_BATCH
-        batches = [ids[i : i + B] for i in range(0, len(ids), B)]
-        for bi, batch in enumerate(batches):
-            if bi + 1 < len(batches):
-                self.experts.prefetch(self.key, batches[bi + 1], optional=True)
-            slab, slots = self.experts.get_slots(self.key, batch)
-            slot_of = dict(zip(batch, slots))
-            rows, cols = np.nonzero(np.isin(idx_np, batch))
-            order = np.argsort(np.array([slot_of[e] for e in idx_np[rows, cols]]), kind="stable")
-            rows, cols = rows[order], cols[order]
-            rhs = mx.array(np.array([slot_of[e] for e in idx_np[rows, cols]], dtype=np.uint32))[:, None]
-            r = mx.array(rows.astype(np.int32))
-            xr = xq[r][:, None, None, :]  # [n, 1, 1, dim]
-            q1, q3, q2 = slab.proj("w1"), slab.proj("w3"), slab.proj("w2")
-            g = mx.gather_qmm(xr, *q1[:3], rhs_indices=rhs, transpose=True, group_size=64, bits=q1[3], sorted_indices=True)
-            u = mx.gather_qmm(xr, *q3[:3], rhs_indices=rhs, transpose=True, group_size=64, bits=q3[3], sorted_indices=True)
-            wk = w[r, mx.array(cols.astype(np.int32))].astype(mx.float32)[:, None, None, None]
-            h = act_quant((wk * swiglu(g, u, self.a.swiglu_limit)).astype(x.dtype))
-            o = mx.gather_qmm(h, *q2[:3], rhs_indices=rhs, transpose=True, group_size=64, bits=q2[3], sorted_indices=True)
-            o = o.reshape(-1, o.shape[-1]).astype(mx.float32)
-            y = y + o.sum(axis=0, keepdims=True) if x.shape[0] == 1 else y.at[r].add(o)
-            if len(batches) > 1:
-                mx.eval(y)
+        if x.shape[0] == 1:
+            self.experts.prefetch(self.key, ids)
+            hits = [e for e in ids if self.experts.resident(self.key, e)]
+            groups = [g for g in (hits, [e for e in ids if e not in hits]) if g]
+        else:
+            B = self.EXPERT_BATCH
+            groups = [ids[i : i + B] for i in range(0, len(ids), B)]
+        for gi, group in enumerate(groups):
+            if x.shape[0] > 1 and gi + 1 < len(groups):
+                self.experts.prefetch(self.key, groups[gi + 1], optional=True)
+            y = self._experts_into(y, x, xq, w, idx_np, group)
+            if gi + 1 < len(groups):
+                mx.async_eval(y) if x.shape[0] == 1 else mx.eval(y)
         return y.astype(x.dtype)
+
+    def _experts_into(self, y, x, xq, w, idx_np, group):
+        slab, slots = self.experts.get_slots(self.key, group)
+        slot_of = dict(zip(group, slots))
+        rows, cols = np.nonzero(np.isin(idx_np, group))
+        order = np.argsort(np.array([slot_of[e] for e in idx_np[rows, cols]]), kind="stable")
+        rows, cols = rows[order], cols[order]
+        rhs = mx.array(np.array([slot_of[e] for e in idx_np[rows, cols]], dtype=np.uint32))[:, None]
+        r = mx.array(rows.astype(np.int32))
+        xr = xq[r][:, None, None, :]  # [n, 1, 1, dim]
+        q1, q3, q2 = slab.proj("w1"), slab.proj("w3"), slab.proj("w2")
+        g = mx.gather_qmm(xr, *q1[:3], rhs_indices=rhs, transpose=True, group_size=64, bits=q1[3], sorted_indices=True)
+        u = mx.gather_qmm(xr, *q3[:3], rhs_indices=rhs, transpose=True, group_size=64, bits=q3[3], sorted_indices=True)
+        wk = w[r, mx.array(cols.astype(np.int32))].astype(mx.float32)[:, None, None, None]
+        h = act_quant((wk * swiglu(g, u, self.a.swiglu_limit)).astype(x.dtype))
+        o = mx.gather_qmm(h, *q2[:3], rhs_indices=rhs, transpose=True, group_size=64, bits=q2[3], sorted_indices=True)
+        o = o.reshape(-1, o.shape[-1]).astype(mx.float32)
+        return y + o.sum(axis=0, keepdims=True) if x.shape[0] == 1 else y.at[r].add(o)
 
     def route(self, x: mx.array, image_mask: mx.array | None = None):
         w, idx, _, _ = self._route_shared(x, self._bias(x, image_mask))

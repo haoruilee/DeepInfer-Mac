@@ -75,3 +75,15 @@ def test_prefill_batches_fit_minimum_slab(big_store):
             if bi + 1 < len(batches):
                 s.prefetch("L00", batches[bi + 1], optional=True)
             _check(s, data, lay, "L00", batch)
+
+
+def test_unrequested_lookahead_reads_do_not_leak(big_store):
+    """Lookahead mispredictions (optional prefetches never requested) must become evictable once
+    their reads finish, or they slowly eat the slab."""
+    import time
+
+    s, data, lay = big_store
+    for i in range(200):
+        s.prefetch("L00", [(i * 13 + j) % 384 for j in range(6)], optional=True)  # never requested
+        time.sleep(0.001)
+        _check(s, data, lay, "L00", [(i * 7 + j) % 384 for j in range(6)])

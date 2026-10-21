@@ -124,9 +124,16 @@ class ExpertStore:
             return slab.free.pop()
         pinned = slab.pins[0] | slab.pins[1] | protect
         for k, slot in slab.lru.items():  # oldest first
-            if slot not in pinned and k not in self.inflight:
-                del slab.lru[k]
-                return slot
+            if slot in pinned:
+                continue
+            fut = self.inflight.get(k)
+            if fut is not None:
+                if not fut.done():
+                    continue  # a read still landing in this slot
+                del self.inflight[k]  # finished read nobody asked for (a lookahead misprediction)
+            del slab.lru[k]
+            self._prefetched.discard(k)
+            return slot
         if optional:
             return None
         raise MemoryError("expert cache too small for one layer's experts; raise --cache-gb")
@@ -152,6 +159,11 @@ class ExpertStore:
                 self.stats["bytes"] += self.layouts[key].nbytes
                 if optional:
                     self._prefetched.add(k)
+
+    def resident(self, key: str, e: int) -> bool:
+        k = (key, int(e))
+        fut = self.inflight.get(k)
+        return k in self.slabs[key].lru and (fut is None or fut.done())
 
     def get_slots(self, key: str, ids) -> tuple[Slab, list[int]]:
         """Make `ids` resident; return their slab and slots (blocking until loaded)."""
