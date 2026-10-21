@@ -9,10 +9,8 @@ from deepinfer_mac import format as F
 from deepinfer_mac.store import ExpertStore
 
 
-@pytest.fixture()
-def store(tmp_path):
+def _make(tmp_path, n):
     lay = F.ExpertLayout(2, 2, 3, dim=128, inter=64)
-    n = 64
     rng = np.random.default_rng(0)
     data = rng.integers(0, 256, size=(n, lay.stride), dtype=np.uint8)
     for e in range(n):
@@ -22,6 +20,16 @@ def store(tmp_path):
     (tmp_path / "layout.json").write_text(json.dumps({"experts": {"L00": lay.to_json()}}))
     s = ExpertStore(tmp_path, budget_bytes=0)  # minimum slab (96 slots)
     return s, data, lay
+
+
+@pytest.fixture()
+def store(tmp_path):
+    return _make(tmp_path, 64)
+
+
+@pytest.fixture()
+def big_store(tmp_path):
+    return _make(tmp_path, 384)  # a real layer's expert count, 4x the minimum slab
 
 
 def _check(s, data, lay, key, ids):
@@ -53,15 +61,15 @@ def test_optional_prefetch_never_breaks_requests(store):
         _check(s, data, lay, "L00", [(i * 5 + j) % 64 for j in range(6)])
 
 
-def test_prefill_batches_fit_minimum_slab(store):
+def test_prefill_batches_fit_minimum_slab(big_store):
     """Expert-major prefill: batches of EXPERT_BATCH with the next batch prefetched (optional),
     as MoE._slab_moe does, over every expert -- must never exhaust a minimum-size slab."""
     from deepinfer_mac.model.model import MoE
 
-    s, data, lay = store
+    s, data, lay = big_store
     B = MoE.EXPERT_BATCH
     for rep in range(3):
-        ids = list(range(64))
+        ids = list(range(384))
         batches = [ids[i : i + B] for i in range(0, len(ids), B)]
         for bi, batch in enumerate(batches):
             if bi + 1 < len(batches):
