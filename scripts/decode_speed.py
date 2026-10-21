@@ -7,6 +7,7 @@ from deepinfer_mac import LLM
 import os
 from deepinfer_mac.model import model as _M
 _M.MoE.LOOKAHEAD = os.environ.get("LOOKAHEAD", "0") == "1"
+_M.MoE.OVERLAP = os.environ.get("OVERLAP", "1") == "1"
 llm = LLM(expert_cache_gb=float(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1][0].isdigit() else None)
 if "--real-engram" not in sys.argv:
     class Zeros:

@@ -501,6 +501,7 @@ def select_candidate_blocks(logits: mx.array, visible: mx.array, topk_blocks: in
 
 class MoE:
     EXPERT_BATCH = 16  # x6 must fit the smallest slab (96 slots): pins of two calls + this batch + a prefetched one
+    OVERLAP = True  # decode: compute resident experts while the misses load
     LOOKAHEAD = False  # measured no gain when SSD-bound; flash-moe saw speculative routing cost 38%
     next_moe = None
 
@@ -530,10 +531,12 @@ class MoE:
         the misses land, then the misses. Prefill works through the experts in batches so the
         working set stays within the slab; each batch's reads overlap the previous batch's compute."""
         ids = np.unique(idx_np).tolist()
-        if x.shape[0] == 1:
+        if x.shape[0] == 1 and self.OVERLAP:
             self.experts.prefetch(self.key, ids)
             hits = [e for e in ids if self.experts.resident(self.key, e)]
             groups = [g for g in (hits, [e for e in ids if e not in hits]) if g]
+        elif x.shape[0] == 1:
+            groups = [ids]
         else:
             B = self.EXPERT_BATCH
             groups = [ids[i : i + B] for i in range(0, len(ids), B)]
