@@ -73,10 +73,11 @@ ENGRAM_GROUP = 32  # g32 + clipping search (other V4.1 ports: plain g64 4-bit co
 ENGRAM_ROW = ENGRAM_DIM * ENGRAM_BITS // 8 + 2 * (ENGRAM_DIM // ENGRAM_GROUP) * 2  # 160
 
 
-# Index-source layers (their indexer picks what every following layer attends to) and the late
-# layers carry the most weight for output quality (rapid-mlx's per-layer KL study; a 2-bit index layer
-# cut MTP acceptance 84% -> 58% in another port), the last layer most of all.
-HIGH_LAYERS = {8, 14, 20, 24, 28, 32, 35, 36, 37, 38}
+# Index-source layers (their indexer picks what every following layer attends to) and the decoder
+# band 20-38 carry the most weight for output quality (rapid-mlx's per-layer KL study; a 2-bit index
+# layer cut MTP acceptance 84% -> 58% in another port), the last layer most of all. Measured here:
+# each 2/3-bit layer keeps hidden-state cosine 0.989-0.995 against the original FP4 experts.
+HIGH_LAYERS = {8, 14} | set(range(20, 39))  # index sources + the whole decoder band
 
 
 def expert_layout_for(layer: int, n_layers: int = 40, is_mtp: bool = False) -> ExpertLayout:
