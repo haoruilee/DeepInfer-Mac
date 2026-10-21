@@ -43,7 +43,8 @@ def chat(a):
             llm.reset()
             continue
         msgs.append({"role": "user", "content": user})
-        ids, conv = llm.chat_prompt(msgs, thinking=a.think)
+        extra = {"reasoning_effort": a.effort} if a.think and a.effort else {}
+        ids, conv = llm.chat_prompt(msgs, thinking=a.think, **extra)
         sp = SamplingParams(temperature=a.temperature, top_p=0.95, max_tokens=a.max_tokens)
         out, shown = [], ""
         print("ds> ", end="", flush=True)
@@ -97,6 +98,7 @@ def main(argv=None):
         p.add_argument("--lookahead", type=int, default=0, help="prefetch the k most confident next-layer experts (0 = off)")
         if name == "chat":
             p.add_argument("--think", action="store_true")
+            p.add_argument("--effort", choices=["high", "max"], default=None, help="reasoning effort in thinking mode (API default: high = 75)")
             p.add_argument("--temperature", type=float, default=0.6)
             p.add_argument("--max-tokens", type=int, default=2048)
         if name == "serve":
