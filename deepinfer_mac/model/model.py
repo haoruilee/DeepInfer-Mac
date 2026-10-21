@@ -555,7 +555,7 @@ class MoE:
         keep = mx.array(~drop)
         w2 = mx.where(keep, w, 0.0)
         w2 = w2 * (w.sum(-1, keepdims=True) / mx.maximum(w2.sum(-1, keepdims=True), 1e-20))
-        idx2 = idx_np.copy()
+        idx2 = idx_np.astype(np.int64)  # argpartition gives uint32; -1 marks dropped pairs
         idx2[drop] = -1
         return w2, idx2
 
