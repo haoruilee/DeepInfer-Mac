@@ -22,6 +22,8 @@ jobs:
           B=https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash-1017/resolve/main
           for f in model.py kernel.py engram.py vision.py image_processor.py; do curl -sfL $B/inference/$f -o ref/inference/$f; done
           curl -sfL $B/tokenizer.json -o ref/tok/tokenizer.json
+      - name: Lint
+        run: uv run python -m pyflakes deepinfer_mac
       - name: Test
         env:
           DSV41_REF: ref/inference

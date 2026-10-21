@@ -7,7 +7,7 @@ license = {text = "Apache-2.0"}
 dependencies = ["mlx>=0.30", "numpy", "safetensors", "tokenizers", "requests", "xgrammar", "deepseek-recipe", "fastapi", "uvicorn"]
 
 [project.optional-dependencies]
-test = ["pytest", "torch>=2.8", "sympy", "pillow", "httpx"]
+test = ["pytest", "torch>=2.8", "sympy", "pillow", "httpx", "pyflakes"]
 
 [project.scripts]
 deepinfer-mac = "deepinfer_mac.__main__:main"
