@@ -69,6 +69,17 @@ class Args:
     dspark_markov_rank: int = 256
     dspark_n_routed_experts: int = 128
     dspark_n_activated_experts: int = 3
+    image_token_id: int = 129264
+    vision_n_layers: int = 0
+    vision_dim: int = 1024
+    vision_n_heads: int = 16
+    vision_inter_dim: int = 2816
+    vision_patch_size: int = 14
+    vision_downsample_ratio: int = 3
+    vision_max_n_token: int = 1024
+    vision_min_pixels: int = 295936
+    vision_max_wh_ratio: int | None = None
+    vision_rope_theta: float = 10000.0
 
     @classmethod
     def from_dict(cls, d: dict) -> "Args":
@@ -823,6 +834,14 @@ class Transformer:
         for cur, nxt in zip(self.layers, self.layers[1:]):  # linked after materialize: the walk is depth-limited
             cur.ffn.next_moe = nxt.ffn
 
+    def vision_tower(self):
+        """Loaded on first use: text-only sessions never pay its 0.9 GB."""
+        if getattr(self, "_vision", None) is None:
+            from .vision import VisionTower
+
+            self._vision = VisionTower(self.a, self.w.vision())
+        return self._vision
+
     def new_state(self) -> SeqState:
         a = self.a
         comp = {}
@@ -841,21 +860,31 @@ class Transformer:
         replay_from: int | None = None,
         all_logits: bool = False,
         want_hidden: bool = False,
+        images: list | None = None,
+        token_types: np.ndarray | None = None,
     ):
         """Feed `tokens` at positions st.pos.. and return logits (last position, or every position).
 
         replay_from: SWA Bounded Replay. Layers up to the last KV source (the "encoder") see every
         token; the layers after it (the "decoder", which read only that source's compressed KV
         plus their own window) see only tokens at index >= replay_from of this chunk.
+
+        images / token_types: a vision prompt (vision.expand_images); image spans must lie in this
+        chunk. Image positions route with the VL bias and take no part in Engram n-grams.
         """
         a = self.a
         L = len(tokens)
         start = st.pos
         positions = mx.arange(start, start + L)
-        hash_ids = self.ngram(st, tokens) if self.ngram is not None else None
+        is_img = None if token_types is None else np.asarray(token_types) >= 0
+        image_mask = None if is_img is None or not is_img.any() else mx.array(is_img)
+        engram_mask = None if image_mask is None else mx.array(~is_img)
+        hash_ids = self.ngram(st, tokens, None if is_img is None else ~is_img) if self.ngram is not None else None
         st.tokens.extend(tokens)
 
         h = self.embed_tokens(tokens)
+        if images:
+            h = self.vision_tower().merge(h, images)
         h = mx.repeat(h[:, None, :], a.hc_mult, axis=1)
         pre_mix = mx.zeros((L, a.hc_mult), dtype=mx.float32)
         pre_mix[:, 0] = 1.0
@@ -873,11 +902,13 @@ class Transformer:
                 if sh.candidates is not None:
                     sh.candidates = sh.candidates[replay_from:]
                 hash_ids = None if hash_ids is None else hash_ids[replay_from:]
+                image_mask = None if image_mask is None else image_mask[replay_from:]
+                engram_mask = None if engram_mask is None else engram_mask[replay_from:]
             if layer.engram is not None:
-                h = layer.engram(h, hash_ids[:, a.engram_layer_ids.index(i)], None)
+                h = layer.engram(h, hash_ids[:, a.engram_layer_ids.index(i)], engram_mask)
             if i in a.dspark_target_layer_ids:
                 hiddens.append(h.mean(axis=1))
-            h, pre_mix = layer(h, positions, pre_mix, st, st.rings[i], sh, start=start + ((replay_from or 0) if i > last_source else 0))
+            h, pre_mix = layer(h, positions, pre_mix, st, st.rings[i], sh, image_mask, start=start + ((replay_from or 0) if i > last_source else 0))
         st.pos = start + L
         h = Block.hc_pre(h, pre_mix)
         if not all_logits:

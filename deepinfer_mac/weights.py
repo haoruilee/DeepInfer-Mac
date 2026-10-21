@@ -65,6 +65,9 @@ class DiskWeights:
     def layer(self, i: int) -> dict:
         return mx.load(str(self.root / "dense" / f"L{i:02d}.safetensors"))
 
+    def vision(self) -> dict:
+        return mx.load(str(self.root / "vision.safetensors"))
+
     def mtp(self, i: int) -> dict:
         return mx.load(str(self.root / "dense" / f"M{i}.safetensors"))
 

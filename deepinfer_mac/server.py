@@ -37,7 +37,7 @@ from deepseek_recipe import (
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
-from .engine import EOS_ID, LLM, SamplingParams
+from .engine import EOS_ID, LLM, SamplingParams, encode_conversation
 
 PROTOCOLS = {
     "chat_completions": (ChatCompletionRequest, ChatCompletionResponse),
@@ -70,14 +70,13 @@ def sampling_from(conv, n_prompt: int) -> SamplingParams:
 def create_app(llm: LLM) -> FastAPI:
     app = FastAPI(title="DeepInfer-Mac", version="0.1.0")
     tok = Tokenizer.from_file(str(llm.root / "tokenizer.json"))
-    encoding = DeepseekV41Encoding().with_tokenizer(tok)
     gate = threading.Lock()
 
     @app.exception_handler(ConversionError)
     async def conversion_error(_req: Request, exc: ConversionError) -> Response:
         return Response(content=exc.body, status_code=exc.status_code, media_type="application/json")
 
-    async def infer(prompt_ids: list[int], sp: SamplingParams) -> AsyncIterator[InferenceChunk]:
+    async def infer(prompt_ids: list[int], sp: SamplingParams, images=None) -> AsyncIterator[InferenceChunk]:
         loop = asyncio.get_running_loop()
         q: asyncio.Queue = asyncio.Queue()
         stop = threading.Event()
@@ -88,7 +87,7 @@ def create_app(llm: LLM) -> FastAPI:
                 loop.call_soon_threadsafe(q.put_nowait, ("ready", cached))
                 n, last = 0, None
                 try:
-                    for out in llm.stream(prompt_ids, sp):
+                    for out in llm.stream(prompt_ids, sp, images):
                         if stop.is_set():
                             break
                         n, last = n + 1, out.token_id
@@ -115,13 +114,13 @@ def create_app(llm: LLM) -> FastAPI:
         finally:
             stop.set()
 
-    async def body(protocol: str, conv, model: str, prompt_ids, sp) -> AsyncIterator[str]:
+    async def body(protocol: str, conv, model: str, prompt_ids, sp, images=None) -> AsyncIterator[str]:
         req_t, resp_t = PROTOCOLS[protocol]
         rid = str(uuid4())
         proc = StreamProcessor(req_t.chunk_generator(conv, rid, model), conv.parsing_options, tok)
         resp = None if conv.stream else resp_t(rid, model, int(time()), 0, 0)
         try:
-            it = aiter(infer(prompt_ids, sp))
+            it = aiter(infer(prompt_ids, sp, images))
             while True:
                 try:
                     chunk = await anext(it)
@@ -155,12 +154,9 @@ def create_app(llm: LLM) -> FastAPI:
                 return JSONResponse({"error": {"message": str(e), "type": "invalid_request_error"}}, status_code=400)
             model = req.model or "deepseek-flash"
             conv = req.convert(conversion_options())
-            rendered = encoding.render_conversation(conv.conversation)
-            if rendered.image_sources:
-                return JSONResponse({"error": {"message": "images are not supported by this build", "type": "invalid_request_error"}}, status_code=400)
-            prompt_ids = list(encoding.encode(conv.conversation))
+            prompt_ids, images = encode_conversation(conv.conversation, llm.root)
             sp = sampling_from(conv, len(prompt_ids))
-            out = body(protocol, conv, model, prompt_ids, sp)
+            out = body(protocol, conv, model, prompt_ids, sp, images)
             if conv.stream:
                 return StreamingResponse(out, media_type="text/event-stream")
             return Response("".join([p async for p in out]), media_type="application/json")

@@ -30,7 +30,7 @@ def chat(a):
     from .engine import EOS_ID, SamplingParams
 
     msgs = []
-    print("DeepSeek-V4.1-Flash on DeepInfer-Mac. Empty line = quit, /reset = new conversation.\n")
+    print("DeepSeek-V4.1-Flash on DeepInfer-Mac. Empty line = quit, /reset = new conversation, /img <path> <question>.\n")
     while True:
         try:
             user = input("you> ").strip()
@@ -42,13 +42,23 @@ def chat(a):
             msgs = []
             llm.reset()
             continue
-        msgs.append({"role": "user", "content": user})
+        if user.startswith("/img "):  # /img <path-or-url> question
+            _, path, *rest = user.split(" ", 2)
+            import base64, mimetypes
+
+            if not path.startswith(("http://", "https://")):
+                mime = mimetypes.guess_type(path)[0] or "image/png"
+                path = f"data:{mime};base64," + base64.b64encode(open(path, "rb").read()).decode()
+            content = [{"type": "text", "text": rest[0] if rest else "Describe this image."}, {"type": "image_url", "image_url": {"url": path}}]
+        else:
+            content = user
+        msgs.append({"role": "user", "content": content})
         extra = {"reasoning_effort": a.effort} if a.think and a.effort else {}
-        ids, conv = llm.chat_prompt(msgs, thinking=a.think, **extra)
+        ids, images, conv = llm.chat_inputs(msgs, thinking=a.think, **extra)
         sp = SamplingParams(temperature=a.temperature, top_p=0.95, max_tokens=a.max_tokens)
         out, shown = [], ""
         print("ds> ", end="", flush=True)
-        for o in llm.stream(ids, sp):
+        for o in llm.stream(ids, sp, images):
             if o.token_id == EOS_ID:
                 break
             out.append(o.token_id)

@@ -137,6 +137,34 @@ class Grammar:
         return self.matcher.is_terminated()
 
 
+# ------------------------------------------------------------------------------ prompts
+
+IMAGE_PLACEHOLDER = "<｜image｜>"  # what deepseek-recipe renders
+IMAGE_TOKEN = "<｜deepseek_image｜>"  # how this checkpoint's tokenizer spells image_token_id
+_recipe_tokenizers: dict = {}
+
+
+def encode_conversation(conversation, root: Path) -> tuple[list[int], list]:
+    """deepseek-recipe rendering -> token ids, plus the image sources in placeholder order. The
+    image placeholder is spelled differently across tokenizer revisions (the reference takes its id
+    from the config), so it is respelled here before encoding."""
+    from deepseek_recipe import DeepseekV41Encoding, Tokenizer
+
+    tok = _recipe_tokenizers.get(root) or _recipe_tokenizers.setdefault(root, Tokenizer.from_file(str(root / "tokenizer.json")))
+    enc = DeepseekV41Encoding()
+    rendered = enc.render_conversation(conversation)
+    if not rendered.image_sources:
+        return list(enc.with_tokenizer(tok).encode(conversation)), []
+    ids = list(tok.encode(rendered.prompt.replace(IMAGE_PLACEHOLDER, IMAGE_TOKEN)))
+    images = []
+    for src in rendered.image_sources:
+        if getattr(src, "data", None):
+            images.append(bytes(src.data))
+        else:
+            images.append({"url": src.data_url or src.url})
+    return ids, images
+
+
 # ------------------------------------------------------------------------------ engine
 
 
@@ -212,9 +240,24 @@ class LLM:
                 logits, hidden = out if want_hidden else (out, None)
         return st, logits, hidden, reused
 
+    def _prefill_vl(self, prompt: list[int], images: list, want_hidden: bool):
+        """A prompt with images: spans expanded, one chunk, no prefix reuse (image positions all
+        carry the same token id, so token-level prefix matching cannot tell images apart)."""
+        from .model.vision import expand_images
+
+        toks, types, inputs = expand_images(prompt, images, self.args)
+        st = self.model.new_state()
+        replay = max(0, len(toks) - self.keep_tokens) if self.bounded_replay else None
+        out = self.model.forward(st, toks, replay_from=replay, want_hidden=want_hidden, images=inputs, token_types=types)
+        logits, hidden = out if want_hidden else (out, None)
+        st.tokens[:] = [-1] * len(st.tokens)  # never reused as a text prefix
+        return st, logits, hidden, 0
+
     # -- generation
 
-    def stream(self, prompt_token_ids: list[int], sp: SamplingParams | None = None) -> Iterator[RequestOutput]:
+    def stream(self, prompt_token_ids: list[int], sp: SamplingParams | None = None, images: list | None = None) -> Iterator[RequestOutput]:
+        """`images`: one per image placeholder token in the prompt (bytes, path, URL, or an
+        OpenAI/Anthropic image record)."""
         sp = sp or SamplingParams()
         seed = sp.seq_seed if sp.seq_seed is not None else sp.seed
         rng = np.random.default_rng(seed)
@@ -222,7 +265,10 @@ class LLM:
         stops = set(sp.stop_token_ids) | (set() if sp.ignore_eos else {EOS_ID})
         t0 = time.perf_counter()
         io0 = dict(self.weights.experts.stats)
-        st, logits, hidden, reused = self._prefill(list(prompt_token_ids), want_hidden=self.dspark is not None)
+        if images:
+            st, logits, hidden, reused = self._prefill_vl(list(prompt_token_ids), images, want_hidden=self.dspark is not None)
+        else:
+            st, logits, hidden, reused = self._prefill(list(prompt_token_ids), want_hidden=self.dspark is not None)
         t_prefill = time.perf_counter() - t0
         n_prompt = len(prompt_token_ids)
         produced = 0
@@ -280,16 +326,21 @@ class LLM:
 
     def chat_prompt(self, messages: list[dict], thinking: bool = False, **request) -> tuple[list[int], object]:
         """Render an OpenAI-style conversation exactly as DeepSeek's API does (deepseek-recipe)."""
-        from deepseek_recipe import ChatCompletionRequest, ConversionOptions, DeepseekV41Encoding, ModelVersion, Tokenizer
+        ids, images, conv = self.chat_inputs(messages, thinking, **request)
+        if images:
+            raise ValueError("the conversation has images: use chat_inputs() and stream(ids, sp, images)")
+        return ids, conv
+
+    def chat_inputs(self, messages: list[dict], thinking: bool = False, **request):
+        """-> (prompt ids, images, converted request). Images are returned in placeholder order,
+        ready for `stream(ids, sp, images)`."""
+        from deepseek_recipe import ChatCompletionRequest, ConversionOptions, DeepseekV41Encoding, ModelVersion
 
         body = {"model": "deepseek-flash", "messages": messages, "thinking": {"type": "enabled" if thinking else "disabled"}, **request}
         conv = ChatCompletionRequest(json.dumps(body).encode()).convert(
             ConversionOptions().with_model_alias("deepseek-flash", ModelVersion.DeepseekV41Flash)
         )
-        if not hasattr(self, "_recipe_tok"):
-            self._recipe_tok = Tokenizer.from_file(str(self.root / "tokenizer.json"))
-        enc = DeepseekV41Encoding().with_tokenizer(self._recipe_tok)
-        return list(enc.encode(conv.conversation)), conv
+        return (*encode_conversation(conv.conversation, self.root), conv)
 
     def cached_prefix_len(self, prompt: list[int]) -> int:
         st = self._state
