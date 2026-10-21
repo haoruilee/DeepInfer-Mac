@@ -29,7 +29,7 @@ def available_memory() -> int:
     return page * sum(pages.get(k, 0) for k in ("Pages free", "Pages inactive", "Pages purgeable", "Pages speculative"))
 
 
-def default_expert_budget(root: Path, margin_gb: float = 2.5, os_reserve_gb: float = 6.0) -> int:
+def default_expert_budget(root: Path, margin_gb: float = 4.0, os_reserve_gb: float = 9.0) -> int:
     """Size the expert slabs from what is actually free right now (after the dense weights about to
     load and a safety margin), capped so macOS keeps `os_reserve_gb` even on an idle machine.
     A larger cache is the main decode lever: 1.5x capacity lifts the hit rate 0.38 -> 0.47 on real
