@@ -1,8 +1,9 @@
 """SSD expert streaming throughput on converted layers: decode-like fetches of 6 random experts."""
 import sys, time, numpy as np, mlx.core as mx
+from pathlib import Path
 sys.path.insert(0, ".")
 from deepinfer_mac.store import ExpertStore
-s = ExpertStore("/Users/harvey/models/dsv41-mac", budget_bytes=64 << 20, threads=8)
+s = ExpertStore(Path("~/models/dsv41-mac").expanduser(), budget_bytes=64 << 20, threads=8)
 rng = np.random.default_rng(0)
 keys = ["L00", "L01"]
 for ids_per in (6, 12, 32):
