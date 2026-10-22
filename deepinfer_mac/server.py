@@ -42,6 +42,7 @@ PROTOCOLS = {
     "messages": (MessagesRequest, MessagesResponse),
 }
 CONTEXT_LIMIT = 262144
+THINK_END_ID = 128822  # </think>
 
 
 def conversion_options() -> ConversionOptions:
@@ -60,7 +61,12 @@ def sampling_from(conv, n_prompt: int) -> SamplingParams:
     )
     c = o.output_constraint
     if c is not None and c.kind in ("json", "regex"):
-        sp.so_args = {"schema_type": c.kind, "schema": c.schema}
+        # json without a schema is JSON mode (json_object); in thinking mode the reasoning comes
+        # first, so the grammar only starts after </think> (DeepInfer's trigger_token_ids)
+        kind = "json_object" if c.kind == "json" and not c.schema else c.kind
+        sp.so_args = {"schema_type": kind, "schema": c.schema}
+        if conv.parsing_options.thinking_initial_stage is not None:
+            sp.so_args["trigger_token_ids"] = [THINK_END_ID]
     return sp
 
 
@@ -140,7 +146,10 @@ def create_app(llm: LLM) -> FastAPI:
             else:
                 yield resp.to_json()
         finally:
-            proc.close()
+            try:
+                await it.aclose()  # stop the decode thread now (stop sequence / disconnect), not at GC
+            finally:
+                proc.close()
 
     def route(protocol: str):
         async def handler(request: Request) -> Response:

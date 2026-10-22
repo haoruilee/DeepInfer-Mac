@@ -55,7 +55,7 @@ def chat(a):
         msgs.append({"role": "user", "content": content})
         extra = {"reasoning_effort": a.effort} if a.think and a.effort else {}
         ids, images, conv = llm.chat_inputs(msgs, thinking=a.think, **extra)
-        sp = SamplingParams(temperature=a.temperature, top_p=0.95, max_tokens=a.max_tokens)
+        sp = SamplingParams(temperature=a.temperature, top_p=1.0, max_tokens=a.max_tokens)
         out, shown = [], ""
         print("ds> ", end="", flush=True)
         for o in llm.stream(ids, sp, images):
@@ -108,7 +108,7 @@ def main(argv=None):
         if name == "chat":
             p.add_argument("--think", action="store_true")
             p.add_argument("--effort", choices=["high", "max"], default=None, help="reasoning effort in thinking mode (API default: high = 75)")
-            p.add_argument("--temperature", type=float, default=0.6)
+            p.add_argument("--temperature", type=float, default=1.0, help="model card: 1.0")
             p.add_argument("--max-tokens", type=int, default=2048)
         if name == "serve":
             p.add_argument("--host", default="127.0.0.1")

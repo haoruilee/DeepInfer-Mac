@@ -61,10 +61,13 @@ def test_prefix_reuse_and_generate(setup):
     assert llm.last_stats["reused_tokens"] == len(p) + len(out1) - 1  # the final token is never fed
     m = llm.model
     st = m.new_state()
-    logits = m.forward(st, p)
+    m.forward(st, p[:-1])  # prefill = prompt body, then its last token (the snapshot point)
+    m.forward(st, p[-1:])
     for t in out1[:-1]:
-        logits = m.forward(st, [t])
-    logits = m.forward(st, p2[len(st.tokens):])
+        m.forward(st, [t])
+    rest = p2[len(st.tokens):]
+    m.forward(st, rest[:-1])
+    logits = m.forward(st, rest[-1:])
     manual = [int(np.argmax(np.array(logits[-1])))]
     print("reuse", out2[:1], "manual", manual, llm.last_stats)
     assert out2[:1] == manual
@@ -110,3 +113,27 @@ def test_byte_saver_knobs(setup):
         MoE.PREFILL_TOPK, MoE.PREFILL_KEEP, MoE.SKIP_MISS_BELOW, MoE.LOOKAHEAD, MoE.LOOKAHEAD_K = saved
     print("exact", base, "with byte savers", out)
     assert len(out) == 6
+
+
+def test_snapshot_reuse_when_history_diverges(setup):
+    """Thinking-mode follow-ups drop the previous reasoning from the prompt, so the new prompt
+    diverges right after the old prompt's last token. The snapshot (one token before the old
+    prompt's end) must be reused, and restoring it -- after generation moved the state on -- must
+    reproduce exactly the state built by hand with the same chunking (rings, compressor tails,
+    engram history all rolled back)."""
+    _, llm = setup
+    llm.reset()
+    p = np.random.default_rng(12).integers(100, 120000, size=30).tolist()
+    sp = SamplingParams(temperature=0, max_tokens=5, ignore_eos=True)
+    list(llm.stream(p, sp))
+    p2 = p[:-1] + [777, 888, 999]  # shares only p[:-1] with the previous prompt
+    st, logits, _, reused = llm._prefill(p2, want_hidden=False)
+    assert reused == len(p) - 1
+    m = llm.model
+    ref = m.new_state()
+    m.forward(ref, p[:-1])  # same chunking: old body, new body, new last token
+    m.forward(ref, [777, 888])
+    ref_logits = m.forward(ref, [999])
+    a, b = np.array(logits[-1]), np.array(ref_logits[-1])
+    print("snapshot restore vs hand-built: max abs diff", float(np.abs(a - b).max()))
+    assert np.allclose(a, b, atol=1e-4) and int(a.argmax()) == int(b.argmax())

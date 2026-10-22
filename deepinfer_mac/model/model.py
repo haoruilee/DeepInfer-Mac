@@ -474,7 +474,9 @@ class Attention:
 
     Q_BLOCK = 128
 
-    def __call__(self, x: mx.array, positions: mx.array, st: SeqState, ring: Ring, sh: Shared, start: int) -> mx.array:
+    def __call__(self, x: mx.array, positions: mx.array, st: SeqState, ring: Ring, sh: Shared, start: int, floor: int = 0) -> mx.array:
+        """floor: window keys below this position are invisible -- a bounded-replay chunk's decoder
+        queries see the window only from the replayed suffix's start, as in DeepInfer."""
         a, rd = self.a, self.a.rope_head_dim
         L = x.shape[0]
         proj, core = self._compiled()
@@ -486,7 +488,7 @@ class Attention:
         pos_np = np.arange(start, start + L)
         wpos = pos_np[:, None] - win + 1 + np.arange(win)[None, :]
         slot = wpos % win
-        in_ring = (wpos >= 0) & (wpos < start) & (ring.pos[slot] == wpos)
+        in_ring = (wpos >= floor) & (wpos < start) & (ring.pos[slot] == wpos)
         widx = mx.array(np.where(wpos >= start, win + wpos - start, np.where(in_ring, slot, -1)).astype(np.int32))
         wsrc = mx.concatenate([ring.kv, kv])
 
@@ -777,12 +779,12 @@ class Block:
         y = post[..., None] * x.astype(mx.float32)[:, None, :] + acc
         return y.astype(x.dtype)
 
-    def __call__(self, x, positions, pre_mix, st: SeqState, ring: Ring, sh: Shared, image_mask=None, start: int = 0):
+    def __call__(self, x, positions, pre_mix, st: SeqState, ring: Ring, sh: Shared, image_mask=None, start: int = 0, floor: int = 0):
         eps = self.a.norm_eps
         residual = x
         attn_pre, attn_post, attn_comb = self.hc_mixes(x, "attn")
         h = rms_norm(self.hc_pre(x, pre_mix), self.attn_norm, eps)
-        h = self.attn(h, positions, st, ring, sh, start)
+        h = self.attn(h, positions, st, ring, sh, start, floor)
         x = self.hc_post(h, residual, attn_post, attn_comb)
 
         residual = x
@@ -927,7 +929,9 @@ class Transformer:
                 h = layer.engram(h, hash_ids[:, a.engram_layer_ids.index(i)], engram_mask)
             if i in a.dspark_target_layer_ids:
                 hiddens.append(h.mean(axis=1))
-            h, pre_mix = layer(h, positions, pre_mix, st, st.rings[i], sh, image_mask, start=start + ((replay_from or 0) if i > last_source else 0))
+            replayed = bool(replay_from) and i > last_source
+            q0 = start + (replay_from if replayed else 0)
+            h, pre_mix = layer(h, positions, pre_mix, st, st.rings[i], sh, image_mask, start=q0, floor=q0 if replayed else 0)
         st.pos = start + L
         h = Block.hc_pre(h, pre_mix)
         if not all_logits:

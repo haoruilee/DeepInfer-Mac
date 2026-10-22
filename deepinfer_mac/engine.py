@@ -45,7 +45,10 @@ class SamplingParams:
     ignore_eos: bool = False
     seed: int | None = None
     seq_seed: int | None = None  # DeepInfer's name for the per-request seed
-    so_args: dict | None = None  # {"schema_type": "json"|"regex"|"ebnf"|"json_object", "schema": str}
+    so_args: dict | None = None  # {"schema_type": "json"|"regex"|"ebnf"|"json_object", "schema": str,
+    #                              "trigger_token_ids": [...]}: the grammar starts after the trigger
+    #                              (DeepInfer; e.g. </think> so reasoning stays free)
+    blacklist: tuple = (0, 2, 129262, 129263, 129264)  # BOS, pad, image specials: never generated (DeepInfer eval)
 
 
 @dataclass
@@ -72,6 +75,8 @@ def sample(logits: np.ndarray, sp: SamplingParams, rng: np.random.Generator, mas
     x = logits.astype(np.float64, copy=True)
     if mask is not None:
         x[~mask] = -np.inf
+    if sp.blacklist:
+        x[list(sp.blacklist)] = -np.inf
     if sp.temperature <= 0:
         return int(np.argmax(x))
     x /= sp.temperature
@@ -124,17 +129,26 @@ class Grammar:
         self.matcher = xgr.GrammarMatcher(compiled)
         self.vocab_size = vocab_size
         self.bitmask = xgr.allocate_token_bitmask(1, vocab_size)
+        self.trigger = list(so_args.get("trigger_token_ids") or [])
+        self.active = not self.trigger
+        self._tail: list[int] = []
 
-    def mask(self) -> np.ndarray:
+    def mask(self) -> np.ndarray | None:
+        if not self.active:  # free text until the trigger sequence has been generated
+            return None
         self.matcher.fill_next_token_bitmask(self.bitmask)
         bits = self.bitmask.numpy().view(np.uint8)
         return np.unpackbits(bits, bitorder="little")[: self.vocab_size].astype(bool)
 
     def accept(self, tok: int) -> bool:
+        if not self.active:
+            self._tail = (self._tail + [tok])[-len(self.trigger):]
+            self.active = self._tail == self.trigger
+            return True
         return self.matcher.accept_token(tok)
 
     def done(self) -> bool:
-        return self.matcher.is_terminated()
+        return self.active and self.matcher.is_terminated()
 
 
 # ------------------------------------------------------------------------------ prompts
@@ -208,7 +222,8 @@ class LLM:
         mode = os.environ.get("DEEPINFER_YOCO_PREFILL_TRUNCATION_MODE", "compact")
         self.bounded_replay = (mode != "off") if bounded_replay is None else bounded_replay
         self.keep_tokens = keep_tokens or int(os.environ.get("DEEPINFER_YOCO_PREFILL_KEEP_TOKENS", "140"))
-        assert self.keep_tokens >= args.window_size, "the retained suffix must cover the SWA window"
+        # DeepInfer: the retained suffix must cover the SWA window plus the maximum backtracking length
+        assert self.keep_tokens >= args.window_size + 6, "keep_tokens must cover the SWA window + backtracking"
         self.prefill_chunk = max(prefill_chunk, self.keep_tokens)
         spec = os.environ.get("DEEPINFER_ENABLE_MTP_VARLEN", "0") == "1" if speculative is None else speculative
         self.draft_len = draft_len or int(os.environ.get("DEEPINFER_USE_NEXTN_DECODE", str(args.dspark_block_size)))
@@ -218,38 +233,51 @@ class LLM:
 
             self.dspark = DSpark(args, self.weights, self.model)
         self._state: SeqState | None = None
+        self._snap = None  # (snapshot, its tokens, the state it belongs to)
         self.last_stats: dict = {}
 
     # -- prefill
 
     def _prefill(self, prompt: list[int], want_hidden: bool):
-        """Feed `prompt`, reusing the cached sequence when it is a prefix. Returns (state,
-        last logits, main hidden of the last position or None, number of reused tokens)."""
-        st = self._state
+        """Feed `prompt`, reusing earlier work. Returns (state, last logits, main hidden or None,
+        number of reused tokens).
+
+        Two reuse points: the live sequence when the new prompt extends it, and a snapshot taken
+        one token before the previous prompt's end (DeepInfer stores its cache the same way). The
+        API template drops a turn's reasoning from the next prompt, so in thinking mode a follow-up
+        turn diverges right after the previous prompt's last token -- the snapshot still matches."""
+        st, reused = self._state, 0
+        snap = self._snap
         if st is not None and len(st.tokens) < len(prompt) and prompt[: len(st.tokens)] == st.tokens:
             reused = len(st.tokens)
+        elif snap is not None and len(snap[1]) < len(prompt) and prompt[: len(snap[1])] == snap[1]:
+            st = snap[2]
+            st.restore(snap[0])
+            reused = len(snap[1])
         else:
-            st, reused = self.model.new_state(), 0
+            st = self.model.new_state()
         new = prompt[reused:]
+        body, last = new[:-1], new[-1:]
         # chunking: the last chunk carries at least keep_tokens so bounded replay sees them all
         chunks, i = [], 0
-        while len(new) - i > self.prefill_chunk:
-            cut = min(self.prefill_chunk, len(new) - i - self.keep_tokens)
-            chunks.append(new[i : i + cut])
+        while len(body) - i > self.prefill_chunk:
+            cut = min(self.prefill_chunk, len(body) - i - self.keep_tokens)
+            chunks.append(body[i : i + cut])
             i += cut
-        chunks.append(new[i:])
-        logits = hidden = None
+        if i < len(body):
+            chunks.append(body[i:])
         for ci, ch in enumerate(chunks):
-            last = ci == len(chunks) - 1
+            final = ci == len(chunks) - 1
             if not self.bounded_replay:
                 replay = None
-            elif not last:
+            elif not final:
                 replay = len(ch)  # decoder skipped entirely for this chunk
             else:
                 replay = max(0, len(ch) - self.keep_tokens)
-            out = self.model.forward(st, ch, replay_from=replay, want_hidden=want_hidden and last)
-            if last:
-                logits, hidden = out if want_hidden else (out, None)
+            self.model.forward(st, ch, replay_from=replay)
+        self._snap = (st.snapshot(), list(prompt[:-1]), st)
+        out = self.model.forward(st, last, want_hidden=want_hidden)
+        logits, hidden = out if want_hidden else (out, None)
         return st, logits, hidden, reused
 
     def _prefill_vl(self, prompt: list[int], images: list, want_hidden: bool):
@@ -349,13 +377,16 @@ class LLM:
         return build_chat(self.root, messages, thinking, **request)
 
     def cached_prefix_len(self, prompt: list[int]) -> int:
-        st = self._state
+        st, snap = self._state, self._snap
         if st is not None and len(st.tokens) < len(prompt) and prompt[: len(st.tokens)] == st.tokens:
             return len(st.tokens)
+        if snap is not None and len(snap[1]) < len(prompt) and prompt[: len(snap[1])] == snap[1]:
+            return len(snap[1])
         return 0
 
     def reset(self):
         self._state = None
+        self._snap = None
 
     def close(self):
         self._state = None
