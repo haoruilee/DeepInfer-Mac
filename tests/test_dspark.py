@@ -27,7 +27,9 @@ MTP = dict(
 def models():
     saved = T._no_quant(True)  # isolate logic from rounding-flip amplification, as in test_parity
     rm, mm = T.build(index_topk=64, candidate_topk_blocks=64, **MTP)
-    yield rm, mm, DSpark(mm.a, mm.w, mm)
+    ds = DSpark(mm.a, mm.w, mm)
+    ds.ADAPTIVE = False  # these tests exercise the speculative path itself
+    yield rm, mm, ds
     T._restore(saved)
 
 
@@ -129,3 +131,37 @@ def test_full_accept_path(models):
     steps = sum(1 for o in outs if o.draft_tok)
     print("oracle spec", spec, "verify steps", steps)
     assert spec[:10] == plain[:10] and steps <= 4
+
+
+def test_adaptive_spec_still_exact(models):
+    """With the throughput chooser on, steps mix plain and speculative decoding; greedy output must
+    still equal plain greedy decoding."""
+    _, mm, ds = models
+
+    class Eng:
+        draft_len = 4
+
+        class tokenizer:
+            @staticmethod
+            def decode(ids, skip_special_tokens=False):
+                return ""
+
+    sp = SamplingParams(temperature=0, max_tokens=20, ignore_eos=True)
+    prompt = np.random.default_rng(13).integers(100, 120000, size=20).tolist()
+    st = mm.new_state()
+    logits = mm.forward(st, prompt)
+    plain = []
+    for _ in range(sp.max_tokens):
+        plain.append(int(np.argmax(np.array(logits[-1]))))
+        logits = mm.forward(st, [plain[-1]])
+    ds.ADAPTIVE, ds.PROBE_EVERY = True, 3
+    try:
+        st = mm.new_state()
+        logits, hid = mm.forward(st, prompt, all_logits=True, want_hidden=True)
+        outs = list(ds.generate(Eng(), st, logits, hid, sp, np.random.default_rng(0), None, set(), len(prompt)))
+    finally:
+        ds.ADAPTIVE, ds.PROBE_EVERY = False, 16
+    spec = [o.token_id for o in outs]
+    agree = next((i for i, (a, b) in enumerate(zip(plain, spec)) if a != b), len(plain))
+    print("adaptive spec:", spec[:10], "agree", agree)
+    assert agree >= 10

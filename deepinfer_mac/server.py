@@ -82,7 +82,9 @@ def sampling_from(conv, n_prompt: int) -> SamplingParams:
         top_p=o.top_p if o.top_p is not None else 1.0,
         max_tokens=conv.resolve_max_tokens(n_prompt, CONTEXT_LIMIT),
         seed=o.seed,
+        top_logprobs=(o.top_logprobs or 0) if o.logprobs else 0,
     )
+    sp.want_logprobs = bool(o.logprobs)
     c = o.output_constraint
     if c is not None and c.kind in ("json", "regex"):
         # json without a schema is JSON mode (json_object); in thinking mode the reasoning comes
@@ -119,7 +121,8 @@ def create_app(llm: LLM) -> FastAPI:
                             break
                         n, last = n + 1, out.token_id
                         if last != EOS_ID:
-                            loop.call_soon_threadsafe(q.put_nowait, ("tok", out.token_id))
+                            lps = [(out.token_logprobs, out.top_logprobs)] if getattr(sp, "want_logprobs", False) else None
+                            loop.call_soon_threadsafe(q.put_nowait, ("tok", (out.token_id, lps)))
                 except Exception as e:  # noqa: BLE001 - surfaced to the client as a finish
                     loop.call_soon_threadsafe(q.put_nowait, ("err", repr(e)))
                 reason = InferenceFinishReason.Stop if last == EOS_ID or n < sp.max_tokens else InferenceFinishReason.Length
@@ -132,7 +135,8 @@ def create_app(llm: LLM) -> FastAPI:
                 if kind == "ready":
                     yield InferenceChunk.ready(prompt_usage=PromptUsage(prompt_tokens=len(prompt_ids), prompt_cache_hit_tokens=val))
                 elif kind == "tok":
-                    yield InferenceChunk.tokens([val])
+                    tid, lps = val
+                    yield InferenceChunk.tokens([tid], logprobs=lps) if lps else InferenceChunk.tokens([tid])
                 elif kind == "err":
                     raise RuntimeError(val)
                 else:

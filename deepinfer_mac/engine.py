@@ -49,6 +49,7 @@ class SamplingParams:
     #                              "trigger_token_ids": [...]}: the grammar starts after the trigger
     #                              (DeepInfer; e.g. </think> so reasoning stays free)
     blacklist: tuple = (0, 2, 129262, 129263, 129264)  # BOS, pad, image specials: never generated (DeepInfer eval)
+    top_logprobs: int = 0  # alternatives reported per token
 
 
 @dataclass
@@ -61,6 +62,7 @@ class RequestOutput:
     draft_tok: int = 0
     accept_tok: int = 0
     text: str = ""
+    top_logprobs: list = field(default_factory=list)  # [(token_id, logprob)] after sampling filters
 
 
 # ------------------------------------------------------------------------------ sampling
@@ -71,27 +73,44 @@ def log_softmax(x: np.ndarray) -> np.ndarray:
     return x - m - math.log(np.exp(x - m).sum())
 
 
-def sample(logits: np.ndarray, sp: SamplingParams, rng: np.random.Generator, mask: np.ndarray | None = None) -> int:
+def _distribution(logits: np.ndarray, sp: SamplingParams, mask: np.ndarray | None) -> np.ndarray:
+    """Log-probabilities after masking, temperature, then top-p, then top-k (DeepInfer's order).
+    Greedy (temperature 0) keeps the raw distribution."""
     x = logits.astype(np.float64, copy=True)
     if mask is not None:
         x[~mask] = -np.inf
     if sp.blacklist:
         x[list(sp.blacklist)] = -np.inf
+    if sp.temperature > 0:
+        x /= sp.temperature
+    m = x.max()
+    lp = x - m - math.log(np.exp(x - m).sum())
     if sp.temperature <= 0:
-        return int(np.argmax(x))
-    x /= sp.temperature
-    if sp.top_k and sp.top_k < x.size:
-        kth = np.partition(x, -sp.top_k)[-sp.top_k]
-        x[x < kth] = -np.inf
-    p = np.exp(x - x.max())
-    p /= p.sum()
+        return lp
     if sp.top_p < 1.0:
-        order = np.argsort(-p)
-        c = np.cumsum(p[order])
-        cut = order[np.searchsorted(c, sp.top_p) + 1 :]
-        p[cut] = 0
-        p /= p.sum()
-    return int(rng.choice(p.size, p=p))
+        order = np.argsort(-lp)
+        c = np.cumsum(np.exp(lp[order]))
+        lp[order[np.searchsorted(c, sp.top_p) + 1 :]] = -np.inf
+    if sp.top_k and sp.top_k < lp.size:
+        lp[lp < np.partition(lp, -sp.top_k)[-sp.top_k]] = -np.inf
+    m = lp.max()
+    return lp - m - math.log(np.exp(lp - m).sum())
+
+
+def sample_lp(logits: np.ndarray, sp: SamplingParams, rng: np.random.Generator, mask: np.ndarray | None = None):
+    """-> (token, its logprob, top_logprobs [(id, logprob)])."""
+    lp = _distribution(logits, sp, mask)
+    tok = int(np.argmax(lp)) if sp.temperature <= 0 else int(rng.choice(lp.size, p=np.exp(lp)))
+    top = []
+    if sp.top_logprobs:
+        ids = np.argpartition(-lp, sp.top_logprobs)[: sp.top_logprobs]
+        ids = ids[np.argsort(-lp[ids])]
+        top = [(int(i), float(lp[i])) for i in ids]
+    return tok, float(lp[tok]), top
+
+
+def sample(logits: np.ndarray, sp: SamplingParams, rng: np.random.Generator, mask: np.ndarray | None = None) -> int:
+    return sample_lp(logits, sp, rng, mask)[0]
 
 
 class Grammar:
@@ -338,11 +357,10 @@ class LLM:
     def _plain_decode(self, st, logits, sp, rng, grammar, stops, n_prompt):
         for i in range(sp.max_tokens):
             lg = np.array(logits[-1], dtype=np.float32)
-            tok = sample(lg, sp, rng, grammar.mask() if grammar else None)
-            lp = float(log_softmax(lg)[tok])
+            tok, lp, top = sample_lp(lg, sp, rng, grammar.mask() if grammar else None)
             if grammar is not None:
                 grammar.accept(tok)
-            yield RequestOutput(tok, lp, n_prompt, text=self.tokenizer.decode([tok], skip_special_tokens=False))
+            yield RequestOutput(tok, lp, n_prompt, text=self.tokenizer.decode([tok], skip_special_tokens=False), top_logprobs=top)
             if tok in stops or (grammar is not None and grammar.done()) or i == sp.max_tokens - 1:
                 return  # the last token is not fed: that forward would only serve a token never sampled
             logits = self.model.forward(st, [tok])

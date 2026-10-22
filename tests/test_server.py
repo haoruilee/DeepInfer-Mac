@@ -44,3 +44,14 @@ def test_streaming_and_prefix_cache(client):
     stats = client.get("/stats").json()
     print(stats)
     assert stats["output_tokens"] >= 1
+
+
+def test_logprobs(client):
+    r = client.post("/v1/chat/completions", json={
+        "model": "deepseek-flash", "messages": [{"role": "user", "content": "hi"}], "max_tokens": 3, "temperature": 0.8,
+        "logprobs": True, "top_logprobs": 3, "thinking": {"type": "disabled"}, "seed": 1,
+    })
+    assert r.status_code == 200, r.text
+    lp = r.json()["choices"][0]["logprobs"]["content"]
+    print(json.dumps(lp[0])[:300])
+    assert len(lp) >= 1 and len(lp[0]["top_logprobs"]) == 3 and lp[0]["logprob"] <= 0

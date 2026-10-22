@@ -18,6 +18,8 @@ DeepInfer's. Here:
 
 from __future__ import annotations
 
+import time
+
 import numpy as np
 import mlx.core as mx
 
@@ -68,6 +70,8 @@ def seed_ring(ring: Ring, kv: mx.array, positions, win: int):
 
 
 class DSpark:
+    ADAPTIVE = True  # fall back to plain decoding when it measures faster
+
     def __init__(self, args: Args, weights, model, threshold: float = 0.5):
         self.a, self.model, self.threshold = args, model, threshold
         n = args.n_mtp_layers
@@ -129,6 +133,27 @@ class DSpark:
 
     # ------------------------------------------------------------------------------ loop
 
+    PROBE_EVERY = 16  # re-measure the losing mode this often
+
+    def _choose(self, rate: dict, step: int) -> str:
+        """Speculate or not, by measured throughput. On an SSD-bound machine verifying drafts reads
+        the union of their experts, so plain decoding can win; this keeps --spec from being slower
+        than plain beyond the occasional probe."""
+        if not self.ADAPTIVE:
+            return "spec"
+        if rate["spec"] is None:
+            return "spec"
+        if rate["plain"] is None:
+            return "plain"
+        best, other = ("spec", "plain") if rate["spec"] >= rate["plain"] else ("plain", "spec")
+        return other if step % self.PROBE_EVERY == 0 else best
+
+    @staticmethod
+    def _rate(rate: dict, mode: str, tokens: int, seconds: float) -> None:
+        r = tokens / max(seconds, 1e-6)
+        rate[mode] = r if rate[mode] is None else 0.7 * rate[mode] + 0.3 * r
+
+
     def generate(self, eng, st, logits, hidden, sp, rng, grammar, stops, n_prompt):
         if grammar is not None or hidden is None:
             yield from eng._plain_decode(st, logits, sp, rng, grammar, stops, n_prompt)
@@ -142,10 +167,29 @@ class DSpark:
         t = E.sample(lg, sp, rng)
         yield E.RequestOutput(t, float(E.log_softmax(lg)[t]), n_prompt, text=eng.tokenizer.decode([t], skip_special_tokens=False))
         produced = 1
+        mode_rate = {"spec": None, "plain": None}  # measured tokens/second per mode (EMA)
+        step = 0
         while t not in stops and produced < sp.max_tokens:
+            mode = self._choose(mode_rate, step)
+            step += 1
+            t0 = time.perf_counter()
+            if mode == "plain":
+                # no drafting: one target step, with the draft window kept seeded so speculation
+                # can resume at any point
+                self.seed(st, mh[None] if mh.ndim == 1 else mh, [b])
+                lg, h = m.forward(st, [t], want_hidden=True)
+                lg = np.array(lg[-1], dtype=np.float32)
+                nxt, lp, top = E.sample_lp(lg, sp, rng)
+                self._rate(mode_rate, "plain", 1, time.perf_counter() - t0)
+                yield E.RequestOutput(nxt, lp, n_prompt, text=eng.tokenizer.decode([nxt], skip_special_tokens=False), top_logprobs=top)
+                produced += 1
+                b, mh, t = b + 1, h[-1], nxt
+                continue
             drafts, dlog, conf = self.draft(st, t, mh, b, sp, rng)
+            # DeepInfer ranks drafts by the running product of confidences
+            prod = np.cumprod(conf)
             k = 0
-            while k < min(len(drafts), eng.draft_len, sp.max_tokens - produced - 1) and conf[k] >= self.threshold:
+            while k < min(len(drafts), eng.draft_len, sp.max_tokens - produced - 1) and prod[k] >= self.threshold:
                 k += 1
             snap = st.snapshot() if k else None
             vlog, vhid = m.forward(st, [t] + drafts[:k], all_logits=True, want_hidden=True)
@@ -156,6 +200,7 @@ class DSpark:
                 _, vhid = m.forward(st, [t] + drafts[:acc], all_logits=True, want_hidden=True)
             self.seed(st, vhid[:acc], list(range(b + 1, b + 1 + acc)))
             emitted = drafts[:acc] + [nxt]
+            self._rate(mode_rate, "spec", len(emitted), time.perf_counter() - t0)
             for j, tok in enumerate(emitted):
                 lp = float(E.log_softmax(vlog[j])[tok])
                 last = j == len(emitted) - 1
