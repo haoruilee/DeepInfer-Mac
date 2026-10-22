@@ -157,7 +157,7 @@ MacBook Air M4，24 GB，内置 SSD，macOS 26，关闭其他应用：
 | SSD 专家流式读取 | 2.8–3.15 GB/s；缓存命中率 49% 时每 token 读取约 1.8 GB 专家 |
 | 常驻内存 | 7.7 GB 稠密权重 + 专家缓存（自动设定大小） |
 
-Decode 受 SSD 带宽限制：每个 token 需 40 层 × 6 个专家 × 12–20 MB，减去缓存命中。Prefill 每个 chunk 每层把用到的专家读一遍——即使很短的 prompt 也会用到大部分专家。
+Decode 受 SSD 带宽限制：每个 token 需 40 层 × 6 个专家 × 12–20 MB，减去缓存命中。我们在本模型与本机上实测了其他 SSD 流式项目的技巧：让 macOS 页缓存充当二级专家缓存（0.20–0.97 tok/s，对比 1.12）、专家读取 4 路拆分（1.11 对比 1.12）、下一层预取（−6%）——在这里都更慢：7.7 GB 常驻稠密权重加 12–20 MB 的专家没有留下内存余量。长 prompt 的 prefill 受 GPU 算力限制。Prefill 每个 chunk 每层把用到的专家读一遍——即使很短的 prompt 也会用到大部分专家。
 复现：`python scripts/decode_speed.py --real-engram` 与 `python -m deepinfer_mac bench`。
 
 ## 针对你的 Mac 调优
@@ -170,7 +170,7 @@ Decode 受 SSD 带宽限制：每个 token 需 40 层 × 6 个专家 × 12–20 
 | `--prefill-topk 4` | 关闭 | 最后 140 个 token 之外的 prompt token 只用 top-4 专家（有损；只对短到中等长度 prompt 有效）。 |
 | `--lookahead K` | 关闭 | 预取下一层置信度最高的 K 个专家。本机 SSD 受限，K=2 实测慢 6%；更快的 SSD 上可能有收益。 |
 | `--moe-topk N` | 6 | 所有 token 使用的专家数（有损）。 |
-| `--spec` | 关闭 | DSpark 投机解码。草稿接受率 67%，但验证需流式读取多个 token 的专家并集：本机 0.35 tok/s。适合内存足以缓存专家的 Mac。 |
+| `--spec` | 关闭 | DSpark 投机解码（与 DeepInfer 相同的累积置信度草稿排序）。吞吐选择器实测投机与普通步骤并保留更快者：在 24 GB 的 Air 上投机更慢（验证需读取草稿专家并集），因此会回落为普通解码——1.14 tok/s。 |
 
 各组件如何协同见 [docs/architecture.md](docs/architecture.md)。
 

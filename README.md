@@ -167,6 +167,10 @@ MacBook Air M4, 24 GB, internal SSD, macOS 26 — everything else closed:
 | Resident memory | 7.7 GB dense weights + the expert cache (auto-sized) |
 
 Decode is bounded by SSD bandwidth: 40 layers × 6 experts × 12–20 MB per token, minus cache hits.
+We measured the tricks other SSD-streaming projects use, on this model and machine: letting macOS's
+page cache act as a second-level expert cache (0.20–0.97 tok/s vs 1.12), splitting each expert read
+4-way (1.11 vs 1.12) and next-layer prefetch (−6%) all lose here — 7.7 GB of resident dense weights
+and 12–20 MB experts leave no RAM headroom for them. Long-prompt prefill is GPU-compute bound.
 Prefill streams the experts once per layer per chunk — even a short prompt routes to most of them.
 Reproduce with `python scripts/decode_speed.py --real-engram` and `python -m deepinfer_mac bench`.
 
@@ -180,7 +184,7 @@ Reproduce with `python scripts/decode_speed.py --real-engram` and `python -m dee
 | `--prefill-topk 4` | off | Route prompt tokens outside the last 140 to their top-4 experts (lossy; helps only short-to-medium prompts). |
 | `--lookahead K` | off | Prefetch the K most confident next-layer experts. Measured 6% slower at K=2 on this SSD-bound machine; may help on faster SSDs. |
 | `--moe-topk N` | 6 | Experts per token for every token (lossy). |
-| `--spec` | off | DSpark speculative decoding. Drafts are accepted 67% of the time, but verifying them streams the union of their experts: 0.35 tok/s here. Meant for Macs with enough RAM to cache experts. |
+| `--spec` | off | DSpark speculative decoding (cumulative-confidence draft ranking, as DeepInfer). A throughput chooser measures speculative vs. plain steps and keeps the faster: on this 24 GB Air speculation loses (verification streams the union of the drafts' experts), so it settles on plain decoding — 1.14 tok/s. |
 
 See [docs/architecture.md](docs/architecture.md) for how the pieces fit together.
 

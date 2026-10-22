@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.1.1
+
+Alignment with DeepInfer and deepseek-recipe, and fixes found by reviewing them and peer projects.
+
+- **JSON mode** on the server: `json_object` (no schema) now compiles; in thinking mode the grammar
+  starts after `</think>` (DeepInfer's `trigger_token_ids`), so reasoning is no longer forced into JSON.
+- **Thinking-mode multi-turn chat** reuses the conversation: a snapshot one token before each prompt's
+  end (as DeepInfer stores its cache) survives the API template dropping earlier reasoning. Restoring it
+  is bit-exact.
+- **Images on the server** go through deepseek-recipe's resolver (the API's preprocessing); image URLs
+  may only reach public addresses, and the engine receives bytes, never paths.
+- **Sampling** as DeepInfer: top-p before top-k, logprobs of the processed distribution,
+  `logprobs`/`top_logprobs` in the server; BOS, pad and image specials are never generated.
+- **DSpark**: drafts ranked by the running product of confidences; a measured throughput chooser falls
+  back to plain decoding when speculation loses (here: 1.14 vs. 0.35 tok/s before).
+- Bounded replay: replayed decoder queries see the window only from the replay start, as in DeepInfer.
+- Measured and rejected on this machine: OS page cache as a second-level expert cache, split reads,
+  larger prefill chunks (all documented in the README).
+- Prefill expert compute as one quantized matmul per expert (1.67x).
+
+
 ## v0.1.0
 
 First public release: DeepSeek-V4.1-Flash (`deepseek-ai/DeepSeek-V4.1-Flash-1017`) on a single

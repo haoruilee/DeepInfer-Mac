@@ -1,6 +1,6 @@
 [project]
 name = "deepinfer-mac"
-version = "0.1.0"
+version = "0.1.1"
 description = "DeepInfer for Apple Silicon: DeepSeek-V4.1-Flash on a 24 GB Mac via MLX + SSD expert streaming"
 requires-python = ">=3.11"
 license = {text = "Apache-2.0"}

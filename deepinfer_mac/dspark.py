@@ -145,8 +145,16 @@ class DSpark:
             return "spec"
         if rate["plain"] is None:
             return "plain"
-        best, other = ("spec", "plain") if rate["spec"] >= rate["plain"] else ("plain", "spec")
-        return other if step % self.PROBE_EVERY == 0 else best
+        if rate["spec"] >= rate["plain"]:
+            return "plain" if step % self.PROBE_EVERY == 0 else "spec"
+        # speculation is losing: probe it again only after an exponentially growing gap, so its
+        # probes (draft experts streamed + verification + evicted cache) do not dominate
+        gap = rate.setdefault("gap", self.PROBE_EVERY)
+        if step >= rate.get("next_probe", gap):
+            rate["gap"] = gap * 2
+            rate["next_probe"] = step + rate["gap"]
+            return "spec"
+        return "plain"
 
     @staticmethod
     def _rate(rate: dict, mode: str, tokens: int, seconds: float) -> None:
