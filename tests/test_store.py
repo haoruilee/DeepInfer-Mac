@@ -33,12 +33,12 @@ def big_store(tmp_path):
 
 
 def _check(s, data, lay, key, ids):
+    """Every byte of every requested record, across all slab parts, equals the file."""
     slab, slots = s.get_slots(key, ids)
-    first = lay.parts()[0]
-    q = np.array(slab.parts[first[0]])
     for e, sl in zip(ids, slots):
-        got = q[sl].view(np.uint8).reshape(-1)[: first[4]]
-        assert np.array_equal(got, data[e, : first[4]]), (e, sl)
+        for name, shape, dtype, off, n in lay.parts():
+            got = np.array(slab.parts[name][sl]).view(np.uint8).reshape(-1)[:n]
+            assert np.array_equal(got, data[e, off : off + n]), (e, sl, name)
 
 
 def test_contents_and_eviction(store):
@@ -87,3 +87,17 @@ def test_unrequested_lookahead_reads_do_not_leak(big_store):
         s.prefetch("L00", [(i * 13 + j) % 384 for j in range(6)], optional=True)  # never requested
         time.sleep(0.001)
         _check(s, data, lay, "L00", [(i * 7 + j) % 384 for j in range(6)])
+
+
+def test_split_reads_and_page_cache_give_identical_contents(big_store):
+    from deepinfer_mac.store import ExpertStore
+
+    s, data, lay = big_store
+    saved = (ExpertStore.IO_SPLIT, ExpertStore.PAGE_CACHE)
+    try:
+        ExpertStore.IO_SPLIT, ExpertStore.PAGE_CACHE = 4, True
+        s.fds.clear()
+        for i in range(60):
+            _check(s, data, lay, "L00", [(i * 11 + j) % 384 for j in range(6)])
+    finally:
+        ExpertStore.IO_SPLIT, ExpertStore.PAGE_CACHE = saved

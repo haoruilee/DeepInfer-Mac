@@ -59,6 +59,11 @@ class Slab:
 
 
 class ExpertStore:
+    # Let macOS's file cache keep evicted experts (a second-level cache: a "miss" becomes a memory
+    # copy). Peer projects measured +22% on a 24 GB M4 with it on and a smaller slab.
+    PAGE_CACHE = os.environ.get("DEEPINFER_PAGE_CACHE", "0") == "1"
+    IO_SPLIT = int(os.environ.get("DEEPINFER_IO_SPLIT", "1"))  # parallel reads per expert record
+
     def __init__(self, root: Path, budget_bytes: int, threads: int = 8):
         root = Path(root)
         meta = json.loads((root / "layout.json").read_text())["experts"]
@@ -94,7 +99,8 @@ class ExpertStore:
         fd = self.fds.get(key)
         if fd is None:
             fd = os.open(self.paths[key], os.O_RDONLY)
-            fcntl.fcntl(fd, F_NOCACHE, 1)
+            if not self.PAGE_CACHE:
+                fcntl.fcntl(fd, F_NOCACHE, 1)
             self.fds[key] = fd
         return fd
 
@@ -116,6 +122,35 @@ class ExpertStore:
                 bufs.pop(0)
             if bufs and n:
                 bufs[0] = bufs[0][n:]
+
+    def _read_part(self, key: str, e: int, slot: int, i: int, n: int) -> None:
+        """Bytes [i/n, (i+1)/n) of a record (16 KB-aligned cut points), into the right iovecs."""
+        slab, lay = self.slabs[key], self.layouts[key]
+        stride = lay.stride
+        a = (stride * i // n) // F.ALIGN * F.ALIGN
+        b = stride if i == n - 1 else (stride * (i + 1) // n) // F.ALIGN * F.ALIGN
+        if b <= a:
+            return
+        if getattr(self._pad, "buf", None) is None or len(self._pad.buf) < stride - lay.nbytes:
+            self._pad.buf = bytearray(max(stride - lay.nbytes, 1))
+        bufs = slab.iovecs(slot) + ([memoryview(self._pad.buf)[: stride - lay.nbytes]] if stride > lay.nbytes else [])
+        sel, pos = [], 0  # the iovec slices covering [a, b)
+        for v in bufs:
+            lo, hi = max(a, pos), min(b, pos + len(v))
+            if lo < hi:
+                sel.append(v[lo - pos : hi - pos])
+            pos += len(v)
+        off, want = e * stride + a, b - a
+        while want:
+            got = os.preadv(self._fd(key), sel, off)
+            if got <= 0:
+                raise IOError(f"read failed on {key} expert {e}")
+            off, want = off + got, want - got
+            while sel and got >= len(sel[0]):
+                got -= len(sel[0])
+                sel.pop(0)
+            if sel and got:
+                sel[0] = sel[0][got:]
 
     # -- slots
 
@@ -155,7 +190,11 @@ class ExpertStore:
                     return
                 slab.lru[k] = slot
                 protect.add(slot)
-                self.inflight[k] = self.pool.submit(self._read, key, e, slot)
+                if self.IO_SPLIT > 1:
+                    parts = [self.pool.submit(self._read_part, key, e, slot, i, self.IO_SPLIT) for i in range(self.IO_SPLIT)]
+                    self.inflight[k] = self.pool.submit(lambda ps: [p.result() for p in ps], parts)
+                else:
+                    self.inflight[k] = self.pool.submit(self._read, key, e, slot)
                 self.stats["bytes"] += self.layouts[key].nbytes
                 if optional:
                     self._prefetched.add(k)
