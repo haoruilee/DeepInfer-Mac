@@ -196,6 +196,10 @@ Decode 受 SSD 带宽限制：每个 token 需 40 层 × 6 个专家 × 12–20 
 DSV41_REF=/path/to/DeepSeek-V4.1-Flash-1017/inference pytest tests/
 ```
 
+## 参与贡献
+
+请看置顶的 [Roadmap](../../issues/1)、[新手友好任务](../../issues?q=is%3Aopen+label%3A%22good+first+issue%22) 与 [CONTRIBUTING.md](CONTRIBUTING.md)。特别欢迎提交其他 Mac 机型的跑分结果。
+
 ## 许可证
 
 DeepInfer-Mac 以 Apache License 2.0 发布，详见 [LICENSE](LICENSE)。DeepSeek-V4.1-Flash 权重由 DeepSeek 以 MIT 许可证发布。

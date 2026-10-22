@@ -220,6 +220,10 @@ with CPU emulations of its TileLang kernels — as the oracle:
 DSV41_REF=/path/to/DeepSeek-V4.1-Flash-1017/inference pytest tests/
 ```
 
+## Contributing
+
+See the pinned [Roadmap](../../issues/1), the [good first issues](../../issues?q=is%3Aopen+label%3A%22good+first+issue%22) and [CONTRIBUTING.md](CONTRIBUTING.md). Benchmark results from other Macs are especially welcome.
+
 ## License
 
 DeepInfer-Mac is released under the Apache License 2.0. See [LICENSE](LICENSE) for details. The
