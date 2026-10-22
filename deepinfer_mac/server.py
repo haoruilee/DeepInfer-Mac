@@ -32,6 +32,8 @@ from deepseek_recipe import (
     Tokenizer,
 )
 from fastapi import FastAPI, Request
+
+from deepseek_recipe import ImageError, ImageQuota, ImageResolver, OpenCvImagePreprocessor, ReqwestImageFetcher
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from .engine import EOS_ID, LLM, SamplingParams, encode_conversation
@@ -49,6 +51,28 @@ def conversion_options() -> ConversionOptions:
     return ConversionOptions().with_model_alias("deepseek-flash", ModelVersion.DeepseekV41Flash).with_model_alias(
         "deepseek-v4-flash", ModelVersion.DeepseekV41Flash
     )
+
+
+def _public_only(host: str, address: str) -> bool:
+    """Image URLs may only reach public addresses (no loopback, private, link-local, ...)."""
+    import ipaddress
+
+    ip = ipaddress.ip_address(address)
+    return ip.is_global and not ip.is_multicast
+
+
+_resolver = None
+
+
+def resolve_images(sources) -> list[bytes]:
+    """The API's image pipeline (deepseek-recipe): fetch (public hosts only), alpha onto #FDFDFD,
+    cubic resize to the token grid, size caps, WebP -- the engine then gets bytes, never paths."""
+    global _resolver
+    if not sources:
+        return []
+    if _resolver is None:
+        _resolver = ImageResolver(ReqwestImageFetcher().with_destination_filter(_public_only), OpenCvImagePreprocessor())
+    return [bytes(img.data) for img in _resolver.resolve(sources, ImageQuota()).images]
 
 
 def sampling_from(conv, n_prompt: int) -> SamplingParams:
@@ -160,7 +184,11 @@ def create_app(llm: LLM) -> FastAPI:
                 return JSONResponse({"error": {"message": str(e), "type": "invalid_request_error"}}, status_code=400)
             model = req.model or "deepseek-flash"
             conv = req.convert(conversion_options())
-            prompt_ids, images = encode_conversation(conv.conversation, llm.root)
+            prompt_ids, sources = encode_conversation(conv.conversation, llm.root, raw_sources=True)
+            try:
+                images = resolve_images(sources)
+            except ImageError as e:
+                return JSONResponse({"error": {"message": str(e), "type": "invalid_request_error"}}, status_code=400)
             sp = sampling_from(conv, len(prompt_ids))
             out = body(protocol, conv, model, prompt_ids, sp, images)
             if conv.stream:

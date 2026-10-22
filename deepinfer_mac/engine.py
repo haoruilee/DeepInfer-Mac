@@ -158,7 +158,7 @@ IMAGE_TOKEN = "<｜deepseek_image｜>"  # how this checkpoint's tokenizer spells
 _recipe_tokenizers: dict = {}
 
 
-def encode_conversation(conversation, root: Path) -> tuple[list[int], list]:
+def encode_conversation(conversation, root: Path, raw_sources: bool = False) -> tuple[list[int], list]:
     """deepseek-recipe rendering -> token ids, plus the image sources in placeholder order. The
     image placeholder is spelled differently across tokenizer revisions (the reference takes its id
     from the config), so it is respelled here before encoding."""
@@ -170,6 +170,8 @@ def encode_conversation(conversation, root: Path) -> tuple[list[int], list]:
     if not rendered.image_sources:
         return list(enc.with_tokenizer(tok).encode(conversation)), []
     ids = list(tok.encode(rendered.prompt.replace(IMAGE_PLACEHOLDER, IMAGE_TOKEN)))
+    if raw_sources:
+        return ids, list(rendered.image_sources)
     images = []
     for src in rendered.image_sources:
         if getattr(src, "data", None):
