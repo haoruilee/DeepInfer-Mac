@@ -18,7 +18,7 @@ import mlx.core as mx
 import numpy as np
 
 from . import ops
-from .ops import Rope, act_quant, fp4_act_quant, rms_norm, rope_tail
+from .ops import Rope, act_quant, fp4_act_quant, index_head_sum, rms_norm, rope_tail
 
 
 @dataclass
@@ -402,7 +402,7 @@ class Attention:
         q = fp4_act_quant(rope_tail(q, self.rope.cos_sin(positions), rd))
         visible = (positions + 1) // r  # compressed positions each query may see
         T = end // r
-        index_k = sh.index_k.view(T).astype(mx.float32)
+        index_k = sh.index_k.view(T).astype(mx.bfloat16)
         w = (self.i_weights_proj(x).astype(mx.float32) * (a.index_head_dim**-0.5 * a.index_n_heads**-0.5)).astype(mx.bfloat16)
         # query blocks keep the [rows, heads, T] score tensor near 512 MB at long context
         QB = max(1, self.INDEX_SCORE_BUDGET // (a.index_n_heads * max(T, 1)))
@@ -420,11 +420,12 @@ class Attention:
     def _index_block(self, q, w, visible, index_k, T, sh: Shared, b0: int, b1: int):
         a = self.a
         # bf16 roundings at the same points as the reference's torch ops, so near-ties in the
-        # top-k resolve the same way
+        # top-k resolve the same way. q and k are fp4 values with power-of-two scales: bf16 holds
+        # them exactly and their products sum exactly in the fp32 accumulator, so a bf16 matmul
+        # (one rounding at the end) equals the reference's fp32 einsum + cast, at 2.4x the speed
         bf = mx.bfloat16
-        score = mx.einsum("lhd,td->lht", q.astype(mx.float32), index_k).astype(bf)
-        score = (mx.maximum(score, 0) * w[..., None]).astype(bf)
-        score = score.astype(mx.float32).sum(axis=1).astype(bf).astype(mx.float32)  # [rows, T]
+        score = mx.einsum("lhd,td->lht", q.astype(bf), index_k)
+        score = index_head_sum(score, w).astype(mx.float32)  # [rows, T]
         reach = mx.arange(T)[None, :] < visible[:, None]
         score = mx.where(reach, score, -mx.inf)
         cand = None
@@ -434,7 +435,7 @@ class Attention:
             score = mx.where(sh.candidates[b0:b1], score, -mx.inf)
         n = q.shape[0]
         k = min(a.index_topk, T)
-        idx = mx.argpartition(-score, kth=k - 1, axis=-1)[:, :k] if k < T else mx.broadcast_to(mx.arange(T), (n, T))
+        idx = topk_positions(score, k) if k < T else mx.broadcast_to(mx.arange(T), (n, T))
         idx = mx.sort(idx.astype(mx.int32), axis=-1)
         ok = mx.take_along_axis(score, idx, axis=-1) > -mx.inf
         idx = mx.where(ok & (idx < visible[:, None]), idx, -1).astype(mx.int32)
@@ -534,6 +535,17 @@ class Attention:
         return out
 
 
+def topk_positions(score: mx.array, k: int) -> mx.array:
+    """Indices of the k best entries of each row of a bf16-valued float32 [rows, T] score: higher
+    score first, the earlier position on ties. A total order makes the selection independent of
+    the partition kernel (and lets an exact pruned search reproduce it, see dosa.py)."""
+    score = mx.where(score == 0, 0.0, score)  # -0 ties with +0
+    b = score.astype(mx.bfloat16).view(mx.uint16).astype(mx.int64)
+    key = mx.where(b >= 0x8000, 0xFFFF - b, b | 0x8000)  # monotone in the bf16 value
+    pos = mx.arange(score.shape[-1], dtype=mx.int64)
+    return mx.argpartition(-((key << 32) | (0x7FFFFFFF - pos)), kth=k - 1, axis=-1)[..., :k]
+
+
 def select_candidate_blocks(logits: mx.array, visible: mx.array, topk_blocks: int, block: int) -> mx.array:
     """Level one of the two-level top-k: a [L, T] bool mask of the best `topk_blocks` blocks."""
     L, T = logits.shape
@@ -546,7 +558,7 @@ def select_candidate_blocks(logits: mx.array, visible: mx.array, topk_blocks: in
     scores = mx.where(mx.arange(nb)[None, :] == last[:, None], mx.inf, scores)
     k = min(topk_blocks, nb)
     if k < nb:
-        top = mx.argpartition(-scores, kth=k - 1, axis=-1)[:, :k]
+        top = topk_positions(scores, k)
         keep = mx.zeros((L, nb), dtype=mx.bool_)
         keep = mx.put_along_axis(keep, top, mx.take_along_axis(scores, top, axis=-1) > -mx.inf, axis=-1)
     else:

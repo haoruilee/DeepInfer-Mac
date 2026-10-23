@@ -167,6 +167,32 @@ def _hc_split_sinkhorn(mixes: mx.array, scale: mx.array, base: mx.array, hc: int
 # ------------------------------------------------------------------------------ attention
 
 
+def index_head_sum(s: mx.array, w: mx.array) -> mx.array:
+    """The indexer's head reduction, bf16(sum_h bf16(relu(s_h) * w_h))  -- s [R, H, T] bf16 (the
+    rounded q.k), w [R, H] bf16 -> [R, T] bf16. One pass instead of three over the [R, H, T]
+    tensor (16x faster at 32K keys); the same per-element roundings as the elementwise form."""
+    R, H, T = s.shape
+    return _index_head_sum_kernel()(
+        inputs=[s, w], grid=(T, R, 1), threadgroup=(256, 1, 1), output_shapes=[(R, T)], output_dtypes=[mx.bfloat16]
+    )[0]
+
+
+@lru_cache(maxsize=None)
+def _index_head_sum_kernel():
+    src = """
+        uint r = thread_position_in_grid.y, t = thread_position_in_grid.x;
+        int H = s_shape[1], T = s_shape[2];
+        if (t >= (uint)T) return;
+        float acc = 0.0f;
+        for (int h = 0; h < H; h++) {
+            float x = static_cast<float>(s[((size_t)r * H + h) * T + t]);
+            acc += static_cast<float>(static_cast<bfloat16_t>(max(x, 0.0f) * static_cast<float>(w[r * H + h])));
+        }
+        out[(size_t)r * T + t] = static_cast<bfloat16_t>(acc);
+    """
+    return mx.fast.metal_kernel(name="index_head_sum", input_names=["s", "w"], output_names=["out"], source=src)
+
+
 def sparse_attn(q: mx.array, kv: mx.array, sink: mx.array, idxs: mx.array, scale: float, q_block: int = 128) -> mx.array:
     """kernel.sparse_attn for one sequence. q: [L, H, D]; kv: [N, D] (keys == values, MQA with a
     single latent head); idxs: [L, K] int32 into kv, -1 = empty slot; sink: [H] fp32 extra logit

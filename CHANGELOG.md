@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- **Indexer 2x faster in long prefill, bit-identical.** The indexer's queries and keys are fp4 values
+  with power-of-two scales, so a bf16 matmul (fp32 accumulation, one rounding) equals the reference's
+  fp32 einsum + cast; the ReLU / head-weight / head-sum chain is one Metal pass instead of three over
+  the [rows, heads, keys] tensor (16x). Checked on 436M real scores at 16-32K: zero differences.
+- **Deterministic Top-K** (#10): higher score first, earlier position on ties, in both indexer levels.
+- **DoSA study** (#8): exact screening in the style of DoSA (arXiv 2610.13990) measured on real
+  V4.1 indexer activations (`scripts/capture_indexer.py`, `scripts/dosa_study.py`). At 16-32K keys a
+  sound certificate costs 83-160% of plain scoring (Top-K 512 needs ~20 of 32 heads exact before
+  anything can be rejected; the layers after 20 are already restricted to 2048 candidate blocks),
+  so it is not enabled. Worth revisiting at >=128K keys.
+
 ## v0.1.1
 
 Alignment with DeepInfer and deepseek-recipe, and fixes found by reviewing them and peer projects.
