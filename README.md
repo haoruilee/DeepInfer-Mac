@@ -11,6 +11,8 @@
 
 [English](README.md) | [简体中文](README_zh.md)
 
+<p align="center"><img src="docs/assets/hero.svg" alt="DeepInfer-Mac: 338 GB of weights, 8.4 GB in memory" width="100%"></p>
+
 DeepInfer-Mac runs **DeepSeek-V4.1-Flash** (754B parameters) on a single Apple Silicon Mac — built and
 tested on a **MacBook Air M4 with 24 GB** of unified memory. It re-implements the model-side features
 of DeepSeek's [DeepInfer](https://github.com/deepseek-ai/DeepInfer) on [MLX](https://github.com/ml-explore/mlx),
@@ -73,6 +75,11 @@ Not included (compared with DeepInfer):
 
 Real output of `python -m deepinfer_mac chat` on the MacBook Air M4 (24 GB), greedy decoding:
 
+<p align="center"><img src="docs/assets/chat.svg" alt="Real chat output on a MacBook Air M4" width="100%"></p>
+
+<details>
+<summary>As text</summary>
+
 ```text
 you> 用一句话介绍一下杭州。
 ds>  杭州是中国浙江省的省会，以西湖美景、深厚的历史文化底蕴和蓬勃发展的数字经济而闻名。
@@ -86,6 +93,8 @@ ds>  Waves crash on the shore,
 you> /img carrots.jpeg What is in this image? One sentence.
 ds>  A small pile of four fresh orange carrots with green stems rests on a white background.
 ```
+
+</details>
 
 ## Getting started
 
@@ -141,6 +150,12 @@ python -m deepinfer_mac serve --port 8000   # /v1/chat/completions, /v1/response
 The server renders prompts and parses outputs (thinking, tool calls, JSON) with deepseek-recipe, so
 clients see the same API as DeepSeek's. See [examples/openai_client.py](examples/openai_client.py).
 
+## How it works
+
+Dense weights stay in memory; a routed expert is read from the SSD only when the router picks one that is not cached — one `preadv` (`F_NOCACHE`) straight into a preallocated MLX slab, no copy. Decode speed is set by SSD bandwidth, so the expert cache size is the main lever. Details in [docs/architecture.md](docs/architecture.md).
+
+<p align="center"><img src="docs/assets/architecture.svg" alt="How experts stream from the SSD, and where time and memory go" width="100%"></p>
+
 ## Weight format
 
 | Part | Release | DeepInfer-Mac | Size | Where |
@@ -150,7 +165,7 @@ clients see the same API as DeepSeek's. See [examples/openai_client.py](examples
 | Embedding | BF16 | BF16 (memory-mapped) | 1.3 GB | SSD |
 | Routed experts, 40 × 384 | FP4 e2m1 + E8M0/32 | affine g64 with clipping search: 3-bit in layers 0–3, 8, 14 and the decoder band 20–38; 4-bit in layer 39; 2-bit gate/up + 3-bit down in layers 4–7, 9–13, 15–19 | 213 GB | SSD |
 | DSpark draft experts, 3 × 128 | FP4 | 2-bit gate/up, 3-bit down | 4.8 GB | SSD |
-| Engram tables, 2 × 384M rows | FP8 + E8M0/32 | 4-bit g32 with clipping search, 160-byte rows | 123 GB | SSD |
+| Engram tables, 2 × 384M rows | FP8 + E8M0/32 | 4-bit g32 with clipping search, 160-byte rows | 115 GB | SSD |
 
 Lossless experts (MXFP4, ~296 GB) are a one-line change in `deepinfer_mac/format.py` for machines with more disk.
 

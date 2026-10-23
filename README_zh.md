@@ -11,6 +11,8 @@
 
 [English](README.md) | [简体中文](README_zh.md)
 
+<p align="center"><img src="docs/assets/hero.svg" alt="DeepInfer-Mac：338 GB 权重，8.4 GB 常驻内存" width="100%"></p>
+
 DeepInfer-Mac 在一台 Apple Silicon Mac 上运行 **DeepSeek-V4.1-Flash**（7540 亿参数）——在
 **24 GB 统一内存的 MacBook Air M4** 上开发与测试。它基于 [MLX](https://github.com/ml-explore/mlx)
 复现了 DeepSeek [DeepInfer](https://github.com/deepseek-ai/DeepInfer) 的模型侧能力，并用 **SSD 专家流式加载**
@@ -66,6 +68,11 @@ DeepInfer-Mac 在一台 Apple Silicon Mac 上运行 **DeepSeek-V4.1-Flash**（75
 
 MacBook Air M4（24 GB）上 `python -m deepinfer_mac chat` 的真实输出（贪心解码）：
 
+<p align="center"><img src="docs/assets/chat.svg" alt="MacBook Air M4 上的真实对话输出" width="100%"></p>
+
+<details>
+<summary>文本版</summary>
+
 ```text
 you> 用一句话介绍一下杭州。
 ds>  杭州是中国浙江省的省会，以西湖美景、深厚的历史文化底蕴和蓬勃发展的数字经济而闻名。
@@ -79,6 +86,8 @@ ds>  Waves crash on the shore,
 you> /img carrots.jpeg What is in this image? One sentence.
 ds>  A small pile of four fresh orange carrots with green stems rests on a white background.
 ```
+
+</details>
 
 ## 快速开始
 
@@ -132,6 +141,12 @@ python -m deepinfer_mac serve --port 8000   # /v1/chat/completions、/v1/respons
 服务端用 deepseek-recipe 渲染 prompt、解析输出（思考、工具调用、JSON），客户端看到的 API 与 DeepSeek 官方一致。
 见 [examples/openai_client.py](examples/openai_client.py)。
 
+## 工作原理
+
+稠密权重常驻内存；路由专家只在路由器选中、且不在缓存里时才从 SSD 读取——一次 `preadv`（`F_NOCACHE`）直接写进预分配的 MLX slab，零拷贝。解码速度由 SSD 带宽决定，专家缓存越大越快。详见 [docs/architecture.md](docs/architecture.md)。
+
+<p align="center"><img src="docs/assets/architecture.svg" alt="SSD 专家流式加载的数据流与时间、内存分配" width="100%"></p>
+
 ## 权重格式
 
 | 部分 | 官方发布 | DeepInfer-Mac | 大小 | 位置 |
@@ -141,7 +156,7 @@ python -m deepinfer_mac serve --port 8000   # /v1/chat/completions、/v1/respons
 | 词嵌入 | BF16 | BF16（内存映射） | 1.3 GB | SSD |
 | 路由专家，40 × 384 | FP4 e2m1 + E8M0/32 | affine g64 + 裁剪搜索：第 0–3、8、14 层及 decoder 区段 20–38 层 3-bit；第 39 层 4-bit；第 4–7、9–13、15–19 层 gate/up 2-bit、down 3-bit | 213 GB | SSD |
 | DSpark 草稿专家，3 × 128 | FP4 | gate/up 2-bit，down 3-bit | 4.8 GB | SSD |
-| Engram 表，2 × 3.84 亿行 | FP8 + E8M0/32 | 4-bit g32 + 裁剪搜索，每行 160 字节 | 123 GB | SSD |
+| Engram 表，2 × 3.84 亿行 | FP8 + E8M0/32 | 4-bit g32 + 裁剪搜索，每行 160 字节 | 115 GB | SSD |
 
 磁盘充足时，在 `deepinfer_mac/format.py` 中改一行即可使用无损专家（MXFP4，约 296 GB）。
 

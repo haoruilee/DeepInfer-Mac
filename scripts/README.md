@@ -9,3 +9,6 @@
 | `trace_policies.py [record]` | Records a real routing trace and replays it against cache policies at equal capacity. |
 | `bench_store.py` | Raw SSD expert-streaming throughput. |
 | `real_speed.py` | Per-layer decode timing on the converted layers. |
+| `make_figures.py` | Redraws the README figures (`docs/assets/*.svg`) from the measured numbers. |
+| `capture_indexer.py OUT.npz [N]` | Saves the indexer's real inputs (queries, head weights, keys, candidate masks) of an N-token prompt. |
+| `dosa_study.py CAPTURE.npz [SEED]` | Evaluates DoSA-style exact screening certificates on a capture (issue #8). |

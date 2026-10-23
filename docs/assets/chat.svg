@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="486" viewBox="0 0 1280 486" role="img" aria-label="Real chat output of DeepInfer-Mac on a MacBook Air M4 with 24 GB">
+<title>Real chat output of DeepInfer-Mac on a MacBook Air M4 with 24 GB</title>
+<style>
+  .card { fill: #fcfcfb; stroke: #e4e3df; }
+  .t1 { fill: #0b0b0b; } .t2 { fill: #52514e; } .t3 { fill: #7a7974; }
+  .ram { fill: #2a78d6; } .read { fill: #eb6834; } .disk { fill: #dcdad3; }
+  .gpu { fill: #e9f1fc; stroke: #2a78d6; } .ssdbox { fill: #fdf0ea; stroke: #eb6834; }
+  .box { fill: #ffffff; stroke: #c9c7bf; } .wire { stroke: #8a8984; } .ah { fill: #8a8984; }
+  .wire-read { stroke: #eb6834; } .ah-read { fill: #eb6834; }
+  .accent { fill: #1c5cab; } .accent2 { fill: #c4501f; }
+  @media (prefers-color-scheme: dark) {
+    .card { fill: #161b22; stroke: #30363d; }
+    .t1 { fill: #f0efec; } .t2 { fill: #c3c2b7; } .t3 { fill: #94938c; }
+    .ram { fill: #3987e5; } .read { fill: #d95926; } .disk { fill: #3a3a37; }
+    .gpu { fill: #14243a; stroke: #3987e5; } .ssdbox { fill: #2e1c14; stroke: #d95926; }
+    .box { fill: #0d1117; stroke: #484f58; } .wire { stroke: #8b949e; } .ah { fill: #8b949e; }
+    .wire-read { stroke: #e0703f; } .ah-read { fill: #e0703f; }
+    .accent { fill: #86b6ef; } .accent2 { fill: #f08a5d; }
+  }
+  text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'PingFang SC', 'Noto Sans Mono CJK SC', monospace; }
+</style>
+<rect x="0.5" y="0.5" width="1279" height="485" rx="14" fill="#0d1117" stroke="#30363d"/>
+<path d="M0.5 14.5a14 14 0 0 1 14-14h1251a14 14 0 0 1 14 14v31h-1279z" fill="#161b22"/>
+<circle cx="30" cy="23" r="7" fill="#ff5f57"/><circle cx="54" cy="23" r="7" fill="#febc2e"/><circle cx="78" cy="23" r="7" fill="#28c840"/>
+<text x="640.0" y="28" font-size="14" fill="#8b949e" text-anchor="middle">MacBook Air M4 · 24 GB — DeepSeek-V4.1-Flash, greedy</text>
+<text class="mono" x="40" y="96" font-size="17" fill="#8b949e">$ <tspan fill="#e6edf3">python -m deepinfer_mac chat</tspan></text>
+<text class="mono" x="40" y="134" font-size="17" xml:space="preserve"><tspan fill="#79c0ff" font-weight="700">you&gt; </tspan><tspan fill="#e6edf3">用一句话介绍一下杭州。</tspan></text>
+<text class="mono" x="40" y="164" font-size="17" xml:space="preserve"><tspan fill="#ffa657" font-weight="700">ds&gt;  </tspan><tspan fill="#c9d1d9">杭州是中国浙江省的省会，以西湖美景、深厚的历史文化底蕴和蓬勃发展的数字经济而闻名。</tspan></text>
+<text class="mono" x="40" y="194" font-size="17" xml:space="preserve"><tspan fill="#7d8590" xml:space="preserve">      [decode 1.23 tok/s]</tspan></text>
+<text class="mono" x="40" y="224" font-size="17" xml:space="preserve"><tspan fill="#79c0ff" font-weight="700">you&gt; </tspan><tspan fill="#e6edf3">What is 17 * 23? Answer with the number only.</tspan></text>
+<text class="mono" x="40" y="254" font-size="17" xml:space="preserve"><tspan fill="#ffa657" font-weight="700">ds&gt;  </tspan><tspan fill="#c9d1d9">391</tspan></text>
+<text class="mono" x="40" y="284" font-size="17" xml:space="preserve"><tspan fill="#79c0ff" font-weight="700">you&gt; </tspan><tspan fill="#e6edf3">Write a haiku about the sea.</tspan></text>
+<text class="mono" x="40" y="314" font-size="17" xml:space="preserve"><tspan fill="#ffa657" font-weight="700">ds&gt;  </tspan><tspan fill="#c9d1d9">Waves crash on the shore,</tspan></text>
+<text class="mono" x="40" y="344" font-size="17" xml:space="preserve"><tspan fill="#c9d1d9" xml:space="preserve">      Salt and endless blue expanse,</tspan></text>
+<text class="mono" x="40" y="374" font-size="17" xml:space="preserve"><tspan fill="#c9d1d9" xml:space="preserve">      Moon pulls the tide home.</tspan></text>
+<text class="mono" x="40" y="404" font-size="17" xml:space="preserve"><tspan fill="#79c0ff" font-weight="700">you&gt; </tspan><tspan fill="#e6edf3">/img carrots.jpeg What is in this image? One sentence.</tspan></text>
+<text class="mono" x="40" y="434" font-size="17" xml:space="preserve"><tspan fill="#ffa657" font-weight="700">ds&gt;  </tspan><tspan fill="#c9d1d9">A small pile of four fresh orange carrots with green stems rests on a white background.</tspan></text>
+</svg>
