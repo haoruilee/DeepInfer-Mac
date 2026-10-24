@@ -11,7 +11,7 @@
 
 [English](README.md) | [简体中文](README_zh.md)
 
-<p align="center"><img src="docs/assets/hero.svg" alt="DeepInfer-Mac: 338 GB of weights, 8.4 GB in memory" width="100%"></p>
+<p align="center"><img src="docs/assets/hero.svg" alt="DeepInfer-Mac: 338 GB of weights, 7.6 GB in memory" width="100%"></p>
 
 DeepInfer-Mac runs **DeepSeek-V4.1-Flash** (754B parameters) on a single Apple Silicon Mac — built and
 tested on a **MacBook Air M4 with 24 GB** of unified memory. It re-implements the model-side features
@@ -152,22 +152,25 @@ clients see the same API as DeepSeek's. See [examples/openai_client.py](examples
 
 ## How it works
 
-Dense weights stay in memory; a routed expert is read from the SSD only when the router picks one that is not cached — one `preadv` (`F_NOCACHE`) straight into a preallocated MLX slab, no copy. Decode speed is set by SSD bandwidth, so the expert cache size is the main lever. Details in [docs/architecture.md](docs/architecture.md).
+Dense weights stay in memory; a routed expert is read from the SSD only when the router picks one that is not cached — one `preadv` (`F_NOCACHE`) straight into a preallocated MLX slab, no copy. A decode step is then a chain: attention → router → read the misses → compute the experts → next layer, so the SSD idles while the GPU works. **Idle-window speculation** fills that time: after a layer's misses land, the engine reads the next layer's three most likely experts (that layer's router applied to the current hidden state), inserted at the cold end of the cache. Details in [docs/architecture.md](docs/architecture.md) and the [technical report](paper/).
 
 <p align="center"><img src="docs/assets/architecture.svg" alt="How experts stream from the SSD, and where time and memory go" width="100%"></p>
+
+<p align="center"><img src="docs/assets/timeline.svg" alt="Decode timeline from real traces, without and with idle-window speculation" width="100%"></p>
 
 ## Weight format
 
 | Part | Release | DeepInfer-Mac | Size | Where |
 | :--- | :--- | :--- | ---: | :--- |
-| Dense: attention, shared experts, gates, mHC, Engram projections | FP8 e4m3, 32×32 E8M0 | MLX **mxfp8**, bit-exact | 7.7 GB | RAM |
-| Output head | BF16 | affine 8-bit | 0.7 GB | RAM |
-| Embedding | BF16 | BF16 (memory-mapped) | 1.3 GB | SSD |
-| Routed experts, 40 × 384 | FP4 e2m1 + E8M0/32 | affine g64 with clipping search: 3-bit in layers 0–3, 8, 14 and the decoder band 20–38; 4-bit in layer 39; 2-bit gate/up + 3-bit down in layers 4–7, 9–13, 15–19 | 213 GB | SSD |
-| DSpark draft experts, 3 × 128 | FP4 | 2-bit gate/up, 3-bit down | 4.8 GB | SSD |
-| Engram tables, 2 × 384M rows | FP8 + E8M0/32 | 4-bit g32 with clipping search, 160-byte rows | 115 GB | SSD |
+| Dense: attention, shared experts, gates, mHC, Engram projections | FP8 e4m3, 32×32 E8M0 | MLX **mxfp8**, bit-exact | 6.9 GB | RAM |
+| Output head and other global tensors | BF16 | affine 8-bit / BF16 | 0.7 GB | RAM |
+| Embedding | BF16 | BF16 (memory-mapped) | 1.2 GB | SSD |
+| Routed experts, 40 × 384 | FP4 e2m1 + E8M0/32 | affine g64 with clipping search: 3-bit in layers 0–3, 8, 14 and the decoder band 20–38; 4-bit in layer 39; 2-bit gate/up + 3-bit down in layers 4–7, 9–13, 15–19 | 208 GB | SSD |
+| DSpark draft layers (dense / 3 × 128 experts) | FP8 / FP4 | mxfp8 / 2-bit gate/up, 3-bit down | 0.7 / 4.5 GB | SSD |
+| Vision encoder | BF16 | BF16 | 0.9 GB | SSD |
+| Engram tables, 2 × 384M rows | FP8 + E8M0/32 | 4-bit g32 with clipping search, 160-byte rows | 114 GB | SSD |
 
-Lossless experts (MXFP4, ~296 GB) are a one-line change in `deepinfer_mac/format.py` for machines with more disk.
+Sizes are GiB on disk (338 in total). Lossless experts (MXFP4, ~296 GB instead of 208) are a one-line change in `deepinfer_mac/format.py` for machines with more disk.
 
 ## Performance benchmarks
 
@@ -175,30 +178,28 @@ MacBook Air M4, 24 GB, internal SSD, macOS 26 — everything else closed:
 
 | | |
 | :--- | :--- |
-| Decode | **up to 1.35 tok/s** with idle-window speculation (6.5 GB expert cache; 1.23 at 5.5 GB). Without it 1.08–1.25 tok/s, of which ~0.55 s per token is SSD wait |
-| Time to first token: 14-token prompt / 1K / 16K | 10 s / ~49 s / ~8 min |
+| Decode | **1.23 tok/s** with a 5.5 GB expert cache (keeps 9 GB free for macOS); 1.35 tok/s with 6.5 GB |
+| Idle-window speculation (default) | +11–27% decode speed at every cache size from 2.5 to 6.5 GB (interleaved, 43 of 45 blocks faster); outputs unchanged |
+| Time to first token: 14-token prompt / 1K / 16K | 10 s / ~49 s / ~9 min |
 | Follow-up chat turns | prefill only the new tokens |
-| SSD expert streaming | 2.8–3.15 GB/s; ~1.8 GB of expert reads per token at a 49% cache hit rate |
-| Resident memory | 7.7 GB dense weights + the expert cache (auto-sized) |
+| SSD expert reads | 2.7 GB/s with one read in flight, ~3.0 GB/s with several; per token at 5.5 GB: 1.2 GB needed + 0.8 GB read ahead |
+| Resident memory | 7.6 GB dense weights + the expert cache (auto-sized) |
 
-Decode is bounded by SSD bandwidth: 40 layers × 6 experts × 12–20 MB per token, minus cache hits.
-We measured the tricks other SSD-streaming projects use, on this model and machine: letting macOS's
-page cache act as a second-level expert cache (0.20–0.97 tok/s vs 1.12), splitting each expert read
-4-way (1.11 vs 1.12) and next-layer prefetch (−6%) all lose here — 7.7 GB of resident dense weights
-and 12–20 MB experts leave no RAM headroom for them. Long-prompt prefill is GPU-compute bound.
-Prefill streams the experts once per layer per chunk — even a short prompt routes to most of them.
-Reproduce with `python scripts/decode_speed.py --real-engram` and `python -m deepinfer_mac bench`.
+<p align="center"><img src="docs/assets/speed.svg" alt="Decode speed against expert cache size, with and without idle-window speculation" width="100%"></p>
+
+Decode is bounded by the SSD: the expert cache size is the main lever, and speculation uses the time the SSD would otherwise sit idle. Measured on this model and machine, with all compared settings interleaved: overlapping cached and missing experts inside a layer gives +5%; naive next-layer prefetch (guesses issued alongside the needed reads) is 5–11% *slower*; issuing the guesses only after the needed reads land is what turns it into a gain. Splitting each read 4-way (1.11 vs 1.12 tok/s), the OS page cache as a second-level cache (0.20–0.61 vs 1.12) and DSpark speculative decoding (0.35 vs 1.28) all lose here. Long-prompt prefill is GPU-compute bound.
+Reproduce with `python scripts/spec_sweep.py`, `python scripts/spec_ablation.py` and `python -m deepinfer_mac bench`; raw logs are in [paper/logs](paper/logs).
 
 ## Tuning for your Mac
 
 | Flag | Default | Effect |
 | :--- | :--- | :--- |
 | `--cache-gb` | auto (free RAM − dense − 4 GB, keeping ≥ 9 GB for macOS) | Expert cache size — the main decode lever: 1.5× capacity lifts the hit rate 0.38 → 0.47 on real routing traces. Close memory-heavy apps first. |
-| `--skip-miss 0.08` | off | Skip an uncached expert carrying < 8% of a token's routing weight. Measured: +19% decode speed, top-1 agreement 91.2% → 88.8%. |
+| `--skip-miss 0.08` | off | Skip an uncached expert carrying < 8% of a token's routing weight. Earlier, non-interleaved measurement: +19% decode speed; top-1 agreement 91.2% → 88.8%. |
 | `--skip-miss 0.12` | off | +29% decode speed, agreement 88.8%, NLL +13%. |
 | `--prefill-topk 4` | off | Route prompt tokens outside the last 140 to their top-4 experts (lossy; helps only short-to-medium prompts). |
 | `--spec-k K` | 3 | Idle-window speculation: after each layer's misses land, read the next layer's K most likely experts while the GPU computes, inserted at the cold end of the cache. +11–27% decode speed at every cache size from 2.5 to 6.5 GB (interleaved, 43 of 45 blocks faster); outputs unchanged. `0` turns it off. |
-| `--lookahead K` | off | Prefetch the K most confident next-layer experts. Measured 6% slower at K=2 on this SSD-bound machine; may help on faster SSDs. |
+| `--lookahead K` | off | Naive prefetch of the K most likely next-layer experts, issued alongside the needed reads. Interleaved: 5–11% slower than no prefetch on this machine; use `--spec-k` instead. |
 | `--moe-topk N` | 6 | Experts per token for every token (lossy). |
 | `--spec` | off | DSpark speculative decoding (cumulative-confidence draft ranking, as DeepInfer). A throughput chooser measures speculative vs. plain steps and keeps the faster: on this 24 GB Air speculation loses (verification streams the union of the drafts' experts), so it settles on plain decoding — 1.14 tok/s. |
 
@@ -212,9 +213,9 @@ the converted model ([`scripts/score_api.py`](scripts/score_api.py)):
 
 | Cases | Top-1 agreement with the API | Notes |
 | :--- | :---: | :--- |
-| Prose, code, arithmetic, Italian (5) | 90.6% | short continuations; the gap is the 2/3-bit expert compression |
+| Prose, code, arithmetic, Italian (5) | 86.0% of 129 tokens | open-ended continuations; the gap is the 2/3-bit expert compression |
 | Needle retrieval at 127 / 128 / 129 / 511 / 512 / 513 / 1023 / 1024 / 1025 / 16383 / 16384 / 16385 tokens (12) | **100%** | answer `074` correct in all 12 — crosses the sliding window, compressed-key selection and the hierarchical candidate-block boundaries |
-| **All 17** | **96.7%** | mean NLL 0.127 (API 0.046) |
+| **All 17** (mean per case) | **96.7%** | mean NLL 0.127 (API 0.046) |
 
 **Against the official PyTorch reference.** [`tests/`](tests) runs DeepSeek's `inference/model.py` —
 with CPU emulations of its TileLang kernels — as the oracle:

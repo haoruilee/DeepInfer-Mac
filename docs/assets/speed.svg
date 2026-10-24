@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="580" viewBox="0 0 1280 580" role="img" aria-label="Decode speed against expert cache size, with and without idle-window speculation">
+<title>Decode speed against expert cache size, with and without idle-window speculation</title>
+<style>
+  .card { fill: #fcfcfb; stroke: #e4e3df; }
+  .t1 { fill: #0b0b0b; } .t2 { fill: #52514e; } .t3 { fill: #7a7974; }
+  .ram { fill: #2a78d6; } .read { fill: #eb6834; } .spec { fill: #1baf7a; } .disk { fill: #dcdad3; } .attn { fill: #b9b7af; }
+  .gpu { fill: #e9f1fc; stroke: #2a78d6; } .ssdbox { fill: #fdf0ea; stroke: #eb6834; }
+  .box { fill: #ffffff; stroke: #c9c7bf; } .wire { stroke: #8a8984; } .ah { fill: #8a8984; }
+  .wire-read { stroke: #eb6834; } .ah-read { fill: #eb6834; } .wire-spec { stroke: #1baf7a; } .ah-spec { fill: #1baf7a; }
+  .accent { fill: #1c5cab; } .accent2 { fill: #c4501f; } .accent3 { fill: #11805a; }
+  .grid { stroke: #e4e3df; } .axis { stroke: #8a8984; }
+  .l-ov { stroke: #2a78d6; } .l-iw { stroke: #1baf7a; } .d-ov { fill: #2a78d6; } .d-iw { fill: #1baf7a; }
+  .ring { stroke: #fcfcfb; }
+  @media (prefers-color-scheme: dark) {
+    .card { fill: #161b22; stroke: #30363d; }
+    .t1 { fill: #f0efec; } .t2 { fill: #c3c2b7; } .t3 { fill: #94938c; }
+    .ram { fill: #3987e5; } .read { fill: #d95926; } .spec { fill: #199e70; } .disk { fill: #3a3a37; } .attn { fill: #5b5a55; }
+    .gpu { fill: #14243a; stroke: #3987e5; } .ssdbox { fill: #2e1c14; stroke: #d95926; }
+    .box { fill: #0d1117; stroke: #484f58; } .wire { stroke: #8b949e; } .ah { fill: #8b949e; }
+    .wire-read { stroke: #e0703f; } .ah-read { fill: #e0703f; } .wire-spec { stroke: #2bbd88; } .ah-spec { fill: #2bbd88; }
+    .accent { fill: #86b6ef; } .accent2 { fill: #f08a5d; } .accent3 { fill: #5fd3a6; }
+    .grid { stroke: #30363d; } .axis { stroke: #8b949e; }
+    .l-ov { stroke: #3987e5; } .l-iw { stroke: #2bbd88; } .d-ov { fill: #3987e5; } .d-iw { fill: #2bbd88; }
+    .ring { stroke: #161b22; }
+  }
+  text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'PingFang SC', 'Noto Sans Mono CJK SC', monospace; }
+</style>
+<rect class="card" x="0.5" y="0.5" width="1279" height="579" rx="16"/>
+<text class="t1" x="48" y="58" font-size="28" font-weight="700">Decode speed vs. expert cache size</text>
+<text class="t2" x="48" y="90" font-size="19">MacBook Air M4, 24 GB · both settings interleaved in one process, 3 prompts × 3 rounds per point</text>
+<line class="grid" x1="120" y1="450.0" x2="980" y2="450.0" stroke-width="1"/><text class="t3" x="106" y="456.0" font-size="17" text-anchor="end">0.6</text>
+<line class="grid" x1="120" y1="376.66666666666663" x2="980" y2="376.66666666666663" stroke-width="1"/><text class="t3" x="106" y="382.66666666666663" font-size="17" text-anchor="end">0.8</text>
+<line class="grid" x1="120" y1="303.3333333333333" x2="980" y2="303.3333333333333" stroke-width="1"/><text class="t3" x="106" y="309.3333333333333" font-size="17" text-anchor="end">1.0</text>
+<line class="grid" x1="120" y1="230.0" x2="980" y2="230.0" stroke-width="1"/><text class="t3" x="106" y="236.0" font-size="17" text-anchor="end">1.2</text>
+<line class="grid" x1="120" y1="156.66666666666669" x2="980" y2="156.66666666666669" stroke-width="1"/><text class="t3" x="106" y="162.66666666666669" font-size="17" text-anchor="end">1.4</text>
+<text class="t3" x="167.77777777777777" y="480" font-size="17" text-anchor="middle">2.5 GB</text>
+<text class="t3" x="358.8888888888889" y="480" font-size="17" text-anchor="middle">3.5 GB</text>
+<text class="t3" x="550.0" y="480" font-size="17" text-anchor="middle">4.5 GB</text>
+<text class="t3" x="741.1111111111111" y="480" font-size="17" text-anchor="middle">5.5 GB</text>
+<text class="t3" x="932.2222222222222" y="480" font-size="17" text-anchor="middle">6.5 GB</text>
+<line class="axis" x1="120" y1="450" x2="980" y2="450" stroke-width="1.5"/>
+<text class="t2" x="42" y="285.0" font-size="17" transform="rotate(-90 42 285.0)" text-anchor="middle">tokens/s</text>
+<text class="t2" x="550.0" y="512" font-size="17" text-anchor="middle">expert cache size</text>
+<line class="axis" x1="836.6666666666667" y1="120" x2="836.6666666666667" y2="450" stroke-width="1" stroke-dasharray="4 4"/><text class="t3" x="828.6666666666667" y="438" font-size="16" text-anchor="end">keeps 9 GB for macOS ←</text>
+<polyline class="l-ov" points="167.8,405.8 358.9,298.6 550.0,295.4 741.1,273.0 932.2,246.5" fill="none" stroke-width="3"/>
+<line class="l-ov" x1="167.77777777777777" y1="410.89498563572533" x2="167.77777777777777" y2="400.7098533526424" stroke-width="1.5"/>
+<circle class="d-ov ring" cx="167.77777777777777" cy="405.8024194941839" r="7" stroke-width="2.5"/>
+<line class="l-ov" x1="358.8888888888889" y1="318.5415925708338" x2="358.8888888888889" y2="278.6126674479861" stroke-width="1.5"/>
+<circle class="d-ov ring" cx="358.8888888888889" cy="298.57713000941" r="7" stroke-width="2.5"/>
+<line class="l-ov" x1="550.0" y1="317.5256942816567" x2="550.0" y2="273.33530701013046" stroke-width="1.5"/>
+<circle class="d-ov ring" cx="550.0" cy="295.4305006458935" r="7" stroke-width="2.5"/>
+<line class="l-ov" x1="741.1111111111111" y1="298.34501236509357" x2="741.1111111111111" y2="247.7202952561071" stroke-width="1.5"/>
+<circle class="d-ov ring" cx="741.1111111111111" cy="273.0326538106003" r="7" stroke-width="2.5"/>
+<line class="l-ov" x1="932.2222222222222" y1="257.85563226102926" x2="932.2222222222222" y2="235.2412325496573" stroke-width="1.5"/>
+<circle class="d-ov ring" cx="932.2222222222222" cy="246.5484324053433" r="7" stroke-width="2.5"/>
+<text class="t1" x="950.2222222222222" y="248.5484324053433" font-size="19" font-weight="700">1.15</text>
+<text class="t2" x="950.2222222222222" y="270.5484324053433" font-size="16">without speculation</text>
+<polyline class="l-iw" points="167.8,334.9 358.9,257.8 550.0,243.8 741.1,220.6 932.2,176.1" fill="none" stroke-width="3"/>
+<line class="l-iw" x1="167.77777777777777" y1="344.35308385700586" x2="167.77777777777777" y2="325.40775123477874" stroke-width="1.5"/>
+<circle class="d-iw ring" cx="167.77777777777777" cy="334.88041754589227" r="7" stroke-width="2.5"/>
+<line class="l-iw" x1="358.8888888888889" y1="279.71051143876196" x2="358.8888888888889" y2="235.79583528439517" stroke-width="1.5"/>
+<circle class="d-iw ring" cx="358.8888888888889" cy="257.75317336157855" r="7" stroke-width="2.5"/>
+<line class="l-iw" x1="550.0" y1="270.190945078913" x2="550.0" y2="217.44893643597428" stroke-width="1.5"/>
+<circle class="d-iw ring" cx="550.0" cy="243.81994075744362" r="7" stroke-width="2.5"/>
+<line class="l-iw" x1="741.1111111111111" y1="256.71747981720284" x2="741.1111111111111" y2="184.4641670187777" stroke-width="1.5"/>
+<circle class="d-iw ring" cx="741.1111111111111" cy="220.59082341799026" r="7" stroke-width="2.5"/>
+<line class="l-iw" x1="932.2222222222222" y1="219.27354389946808" x2="932.2222222222222" y2="132.931010806683" stroke-width="1.5"/>
+<circle class="d-iw ring" cx="932.2222222222222" cy="176.10227735307552" r="7" stroke-width="2.5"/>
+<text class="t1" x="950.2222222222222" y="178.10227735307552" font-size="19" font-weight="700">1.35</text>
+<text class="t2" x="950.2222222222222" y="200.10227735307552" font-size="16">with speculation</text>
+<text class="accent3" x="167.77777777777777" y="311.40775123477874" font-size="17" font-weight="700" text-anchor="middle">+27%</text>
+<text class="accent3" x="358.8888888888889" y="221.79583528439517" font-size="17" font-weight="700" text-anchor="middle">+11%</text>
+<text class="accent3" x="550.0" y="203.44893643597428" font-size="17" font-weight="700" text-anchor="middle">+14%</text>
+<text class="accent3" x="741.1111111111111" y="170.4641670187777" font-size="17" font-weight="700" text-anchor="middle">+13%</text>
+<text class="accent3" x="932.2222222222222" y="118.93101080668299" font-size="17" font-weight="700" text-anchor="middle">+17%</text>
+<rect class="d-ov" x="120" y="539" width="16" height="16" rx="4"/><text class="t2" x="144" y="552" font-size="18">without speculation</text><rect class="d-iw" x="360.4" y="539" width="16" height="16" rx="4"/><text class="t2" x="384.4" y="552" font-size="18">idle-window speculation (default)</text>
+</svg>

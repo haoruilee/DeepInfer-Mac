@@ -11,7 +11,7 @@
 
 [English](README.md) | [简体中文](README_zh.md)
 
-<p align="center"><img src="docs/assets/hero.svg" alt="DeepInfer-Mac：338 GB 权重，8.4 GB 常驻内存" width="100%"></p>
+<p align="center"><img src="docs/assets/hero.svg" alt="DeepInfer-Mac：338 GB 权重，7.6 GB 常驻内存" width="100%"></p>
 
 DeepInfer-Mac 在一台 Apple Silicon Mac 上运行 **DeepSeek-V4.1-Flash**（7540 亿参数）——在
 **24 GB 统一内存的 MacBook Air M4** 上开发与测试。它基于 [MLX](https://github.com/ml-explore/mlx)
@@ -143,22 +143,25 @@ python -m deepinfer_mac serve --port 8000   # /v1/chat/completions、/v1/respons
 
 ## 工作原理
 
-稠密权重常驻内存；路由专家只在路由器选中、且不在缓存里时才从 SSD 读取——一次 `preadv`（`F_NOCACHE`）直接写进预分配的 MLX slab，零拷贝。解码速度由 SSD 带宽决定，专家缓存越大越快。详见 [docs/architecture.md](docs/architecture.md)。
+稠密权重常驻内存；路由专家只在路由器选中、且不在缓存里时才从 SSD 读取——一次 `preadv`（`F_NOCACHE`）直接写进预分配的 MLX slab，零拷贝。于是每个 decode 步骤是一条链：attention → 路由 → 读取缺失专家 → 计算专家 → 下一层，GPU 计算时 SSD 处于空闲。**空闲窗口推测读取**利用这段时间：某层缺失的专家读完后，引擎读取下一层最可能用到的 3 个专家（用下一层的路由器作用于当前隐状态），并放在缓存的冷端。详见 [docs/architecture.md](docs/architecture.md) 和[技术报告](paper/)。
 
 <p align="center"><img src="docs/assets/architecture.svg" alt="SSD 专家流式加载的数据流与时间、内存分配" width="100%"></p>
+
+<p align="center"><img src="docs/assets/timeline.svg" alt="真实 trace 中的 decode 时间线：有无空闲窗口推测读取" width="100%"></p>
 
 ## 权重格式
 
 | 部分 | 官方发布 | DeepInfer-Mac | 大小 | 位置 |
 | :--- | :--- | :--- | ---: | :--- |
-| 稠密权重：注意力、共享专家、门控、mHC、Engram 投影 | FP8 e4m3，32×32 E8M0 | MLX **mxfp8**，比特级无损 | 7.7 GB | 内存 |
-| 输出头 | BF16 | affine 8-bit | 0.7 GB | 内存 |
-| 词嵌入 | BF16 | BF16（内存映射） | 1.3 GB | SSD |
-| 路由专家，40 × 384 | FP4 e2m1 + E8M0/32 | affine g64 + 裁剪搜索：第 0–3、8、14 层及 decoder 区段 20–38 层 3-bit；第 39 层 4-bit；第 4–7、9–13、15–19 层 gate/up 2-bit、down 3-bit | 213 GB | SSD |
-| DSpark 草稿专家，3 × 128 | FP4 | gate/up 2-bit，down 3-bit | 4.8 GB | SSD |
-| Engram 表，2 × 3.84 亿行 | FP8 + E8M0/32 | 4-bit g32 + 裁剪搜索，每行 160 字节 | 115 GB | SSD |
+| 稠密权重：注意力、共享专家、门控、mHC、Engram 投影 | FP8 e4m3，32×32 E8M0 | MLX **mxfp8**，比特级无损 | 6.9 GB | 内存 |
+| 输出头及其他全局张量 | BF16 | affine 8-bit / BF16 | 0.7 GB | 内存 |
+| 词嵌入 | BF16 | BF16（内存映射） | 1.2 GB | SSD |
+| 路由专家，40 × 384 | FP4 e2m1 + E8M0/32 | affine g64 + 裁剪搜索：第 0–3、8、14 层及 decoder 区段 20–38 层 3-bit；第 39 层 4-bit；第 4–7、9–13、15–19 层 gate/up 2-bit、down 3-bit | 208 GB | SSD |
+| DSpark 草稿层（稠密部分 / 3 × 128 专家） | FP8 / FP4 | mxfp8 / gate/up 2-bit，down 3-bit | 0.7 / 4.5 GB | SSD |
+| 视觉编码器 | BF16 | BF16 | 0.9 GB | SSD |
+| Engram 表，2 × 3.84 亿行 | FP8 + E8M0/32 | 4-bit g32 + 裁剪搜索，每行 160 字节 | 114 GB | SSD |
 
-磁盘充足时，在 `deepinfer_mac/format.py` 中改一行即可使用无损专家（MXFP4，约 296 GB）。
+以上为磁盘上的 GiB（合计 338）。磁盘充足时，在 `deepinfer_mac/format.py` 中改一行即可使用无损专家（MXFP4，约 296 GB，而非 208）。
 
 ## 性能
 
@@ -166,25 +169,28 @@ MacBook Air M4，24 GB，内置 SSD，macOS 26，关闭其他应用：
 
 | | |
 | :--- | :--- |
-| Decode | **最高 1.35 tok/s**（空闲窗口推测读取，专家缓存 6.5 GB；5.5 GB 时 1.23）。关闭时 1.08–1.25 tok/s，每 token 约 0.55 s 等待 SSD |
-| 首 token 延迟：14 token / 1K / 16K 的 prompt | 10 s / 约 49 s / 约 8 分钟 |
+| Decode | **1.23 tok/s**（专家缓存 5.5 GB，为 macOS 保留 9 GB）；缓存 6.5 GB 时 1.35 tok/s |
+| 空闲窗口推测读取（默认开启） | 2.5–6.5 GB 各缓存大小下解码提速 11–27%（交错测量，45 组中 43 组更快），输出不变 |
+| 首 token 延迟：14 token / 1K / 16K 的 prompt | 10 s / 约 49 s / 约 9 分钟 |
 | 多轮对话的后续轮次 | 只 prefill 新增 token |
-| SSD 专家流式读取 | 2.8–3.15 GB/s；缓存命中率 49% 时每 token 读取约 1.8 GB 专家 |
-| 常驻内存 | 7.7 GB 稠密权重 + 专家缓存（自动设定大小） |
+| SSD 专家读取 | 单个读请求 2.7 GB/s，多个并发约 3.0 GB/s；5.5 GB 缓存下每 token 需读 1.2 GB，另预读 0.8 GB |
+| 常驻内存 | 7.6 GB 稠密权重 + 专家缓存（自动设定大小） |
 
-Decode 受 SSD 带宽限制：每个 token 需 40 层 × 6 个专家 × 12–20 MB，减去缓存命中。我们在本模型与本机上实测了其他 SSD 流式项目的技巧：让 macOS 页缓存充当二级专家缓存（0.20–0.97 tok/s，对比 1.12）、专家读取 4 路拆分（1.11 对比 1.12）、下一层预取（−6%）——在这里都更慢：7.7 GB 常驻稠密权重加 12–20 MB 的专家没有留下内存余量。长 prompt 的 prefill 受 GPU 算力限制。Prefill 每个 chunk 每层把用到的专家读一遍——即使很短的 prompt 也会用到大部分专家。
-复现：`python scripts/decode_speed.py --real-engram` 与 `python -m deepinfer_mac bench`。
+<p align="center"><img src="docs/assets/speed.svg" alt="不同专家缓存大小下的解码速度：有无空闲窗口推测读取" width="100%"></p>
+
+Decode 受 SSD 限制：专家缓存大小是最主要的因素，推测读取则利用 SSD 本来空闲的时间。在本模型与本机上交错实测：层内重叠计算已缓存与缺失的专家 +5%；朴素的下一层预取（与必需的读取同时发出）反而慢 5–11%；只有等必需的读取完成后再发出预取，才转为提速。专家读取 4 路拆分（1.11 对比 1.12 tok/s）、macOS 页缓存作二级缓存（0.20–0.61 对比 1.12）、DSpark 投机解码（0.35 对比 1.28）在这里都更慢。长 prompt 的 prefill 受 GPU 算力限制。
+复现：`python scripts/spec_sweep.py`、`python scripts/spec_ablation.py` 与 `python -m deepinfer_mac bench`；原始日志见 [paper/logs](paper/logs)。
 
 ## 针对你的 Mac 调优
 
 | 参数 | 默认 | 作用 |
 | :--- | :--- | :--- |
 | `--cache-gb` | 自动（空闲内存 − 稠密权重 − 4 GB，并为 macOS 保留 ≥ 9 GB） | 专家缓存大小，是 decode 速度的主要杠杆：容量提升 1.5 倍，真实路由轨迹上的命中率从 0.38 升到 0.47。建议先关闭占内存的应用。 |
-| `--skip-miss 0.08` | 关闭 | 未命中缓存且路由权重占比 < 8% 的专家直接跳过。实测：decode 快 19%，top-1 一致率 91.2% → 88.8%。 |
+| `--skip-miss 0.08` | 关闭 | 未命中缓存且路由权重占比 < 8% 的专家直接跳过。早期非交错测量：decode 快 19%；top-1 一致率 91.2% → 88.8%。 |
 | `--skip-miss 0.12` | 关闭 | decode 快 29%，一致率 88.8%，NLL +13%。 |
 | `--prefill-topk 4` | 关闭 | 最后 140 个 token 之外的 prompt token 只用 top-4 专家（有损；只对短到中等长度 prompt 有效）。 |
 | `--spec-k K` | 3 | 空闲窗口推测读取：每层缺失的专家读完后，在 GPU 计算期间读取下一层最可能的 K 个专家，并放在缓存的冷端。2.5–6.5 GB 各缓存大小下解码提速 11–27%（交错测量，45 组中 43 组更快），输出不变。设为 `0` 关闭。 |
-| `--lookahead K` | 关闭 | 预取下一层置信度最高的 K 个专家。本机 SSD 受限，K=2 实测慢 6%；更快的 SSD 上可能有收益。 |
+| `--lookahead K` | 关闭 | 朴素预取：与必需的读取同时预取下一层最可能的 K 个专家。交错实测在本机上慢 5–11%；请改用 `--spec-k`。 |
 | `--moe-topk N` | 6 | 所有 token 使用的专家数（有损）。 |
 | `--spec` | 关闭 | DSpark 投机解码（与 DeepInfer 相同的累积置信度草稿排序）。吞吐选择器实测投机与普通步骤并保留更快者：在 24 GB 的 Air 上投机更慢（验证需读取草稿专家并集），因此会回落为普通解码——1.14 tok/s。 |
 
@@ -196,9 +202,9 @@ Decode 受 SSD 带宽限制：每个 token 需 40 层 × 6 个专家 × 12–20 
 
 | 用例 | 与 API 的 top-1 一致率 | 说明 |
 | :--- | :---: | :--- |
-| 散文、代码、算术、意大利语（5） | 90.6% | 续写较短；差距来自 2/3-bit 专家压缩 |
+| 散文、代码、算术、意大利语（5） | 129 个 token 中 86.0% | 开放式续写；差距来自 2/3-bit 专家压缩 |
 | 127 / 128 / 129 / 511 / 512 / 513 / 1023 / 1024 / 1025 / 16383 / 16384 / 16385 token 的大海捞针（12） | **100%** | 12 个答案 `074` 全部正确——跨越滑动窗口、压缩 key 选择与分层候选块边界 |
-| **全部 17 个** | **96.7%** | 平均 NLL 0.127（API 0.046） |
+| **全部 17 个**（按用例平均） | **96.7%** | 平均 NLL 0.127（API 0.046） |
 
 **对齐官方 PyTorch 参考实现。** [`tests/`](tests) 以 DeepSeek 的 `inference/model.py`（TileLang kernel 用 CPU 模拟）为基准：
 

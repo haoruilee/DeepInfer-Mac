@@ -1,58 +1,67 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="610" viewBox="0 0 1280 610" role="img" aria-label="How DeepInfer-Mac streams experts from the SSD, and where time and memory go">
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="690" viewBox="0 0 1280 690" role="img" aria-label="How DeepInfer-Mac streams experts from the SSD, and where time and memory go">
 <title>How DeepInfer-Mac streams experts from the SSD, and where time and memory go</title>
 <style>
   .card { fill: #fcfcfb; stroke: #e4e3df; }
   .t1 { fill: #0b0b0b; } .t2 { fill: #52514e; } .t3 { fill: #7a7974; }
-  .ram { fill: #2a78d6; } .read { fill: #eb6834; } .disk { fill: #dcdad3; }
+  .ram { fill: #2a78d6; } .read { fill: #eb6834; } .spec { fill: #1baf7a; } .disk { fill: #dcdad3; } .attn { fill: #b9b7af; }
   .gpu { fill: #e9f1fc; stroke: #2a78d6; } .ssdbox { fill: #fdf0ea; stroke: #eb6834; }
   .box { fill: #ffffff; stroke: #c9c7bf; } .wire { stroke: #8a8984; } .ah { fill: #8a8984; }
-  .wire-read { stroke: #eb6834; } .ah-read { fill: #eb6834; }
-  .accent { fill: #1c5cab; } .accent2 { fill: #c4501f; }
+  .wire-read { stroke: #eb6834; } .ah-read { fill: #eb6834; } .wire-spec { stroke: #1baf7a; } .ah-spec { fill: #1baf7a; }
+  .accent { fill: #1c5cab; } .accent2 { fill: #c4501f; } .accent3 { fill: #11805a; }
+  .grid { stroke: #e4e3df; } .axis { stroke: #8a8984; }
+  .l-ov { stroke: #2a78d6; } .l-iw { stroke: #1baf7a; } .d-ov { fill: #2a78d6; } .d-iw { fill: #1baf7a; }
+  .ring { stroke: #fcfcfb; }
   @media (prefers-color-scheme: dark) {
     .card { fill: #161b22; stroke: #30363d; }
     .t1 { fill: #f0efec; } .t2 { fill: #c3c2b7; } .t3 { fill: #94938c; }
-    .ram { fill: #3987e5; } .read { fill: #d95926; } .disk { fill: #3a3a37; }
+    .ram { fill: #3987e5; } .read { fill: #d95926; } .spec { fill: #199e70; } .disk { fill: #3a3a37; } .attn { fill: #5b5a55; }
     .gpu { fill: #14243a; stroke: #3987e5; } .ssdbox { fill: #2e1c14; stroke: #d95926; }
     .box { fill: #0d1117; stroke: #484f58; } .wire { stroke: #8b949e; } .ah { fill: #8b949e; }
-    .wire-read { stroke: #e0703f; } .ah-read { fill: #e0703f; }
-    .accent { fill: #86b6ef; } .accent2 { fill: #f08a5d; }
+    .wire-read { stroke: #e0703f; } .ah-read { fill: #e0703f; } .wire-spec { stroke: #2bbd88; } .ah-spec { fill: #2bbd88; }
+    .accent { fill: #86b6ef; } .accent2 { fill: #f08a5d; } .accent3 { fill: #5fd3a6; }
+    .grid { stroke: #30363d; } .axis { stroke: #8b949e; }
+    .l-ov { stroke: #3987e5; } .l-iw { stroke: #2bbd88; } .d-ov { fill: #3987e5; } .d-iw { fill: #2bbd88; }
+    .ring { stroke: #161b22; }
   }
   text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif; }
   .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'PingFang SC', 'Noto Sans Mono CJK SC', monospace; }
 </style>
-<rect class="card" x="0.5" y="0.5" width="1279" height="609" rx="16"/>
-<text class="t1" x="48" y="58" font-size="22" font-weight="700">One token, one layer — ×40 layers per token</text>
-<text class="t2" x="48" y="84" font-size="18">Dense weights stay in memory; an expert is read from the SSD only when it is not cached.</text>
-<rect class="gpu" x="40" y="110" width="790" height="330" rx="14" stroke-width="1.5" stroke-dasharray="6 5"/>
-<text class="accent" x="60" y="136" font-size="16" font-weight="700" letter-spacing="1">UNIFIED MEMORY · GPU</text>
-<rect class="ssdbox" x="980" y="110" width="260" height="330" rx="14" stroke-width="1.5" stroke-dasharray="6 5"/>
-<text class="accent2" x="1000" y="136" font-size="16" font-weight="700" letter-spacing="1">INTERNAL SSD</text>
-<rect class="box" x="64" y="160" width="220" height="110" rx="10" stroke-width="1.5"/><text class="t1" x="174.0" y="190" font-size="20" font-weight="600" text-anchor="middle">Attention</text><text class="t2" x="174.0" y="218" font-size="16" text-anchor="middle">sparse attention</text><text class="t2" x="174.0" y="240" font-size="16" text-anchor="middle">+ indexer, mHC, Engram</text><text class="t2" x="174.0" y="262" font-size="16" text-anchor="middle">mxfp8, bit-exact</text>
-<rect class="box" x="320" y="160" width="200" height="110" rx="10" stroke-width="1.5"/><text class="t1" x="420.0" y="190" font-size="20" font-weight="600" text-anchor="middle">Router</text><text class="t2" x="420.0" y="218" font-size="16" text-anchor="middle">6 of 384 experts</text><text class="t2" x="420.0" y="240" font-size="16" text-anchor="middle">+ shared expert</text>
-<rect class="box" x="556" y="160" width="250" height="110" rx="10" stroke-width="1.5"/><text class="t1" x="681.0" y="190" font-size="20" font-weight="600" text-anchor="middle">Expert cache</text><text class="t2" x="681.0" y="218" font-size="16" text-anchor="middle">LRU slots in MLX slabs</text><text class="t2" x="681.0" y="240" font-size="16" text-anchor="middle">~49% hit rate</text>
-<rect class="box" x="556" y="300" width="250" height="90" rx="10" stroke-width="1.5"/><text class="t1" x="681.0" y="330" font-size="20" font-weight="600" text-anchor="middle">gather_qmm</text><text class="t2" x="681.0" y="358" font-size="16" text-anchor="middle">6 experts, one fused</text><text class="t2" x="681.0" y="380" font-size="16" text-anchor="middle">matmul per projection</text>
-<rect class="box" x="1000" y="160" width="220" height="110" rx="10" stroke-width="1.5"/><text class="t1" x="1110.0" y="190" font-size="20" font-weight="600" text-anchor="middle">Routed experts</text><text class="t2" x="1110.0" y="218" font-size="16" text-anchor="middle">40 × 384, 2/3/4-bit</text><text class="t2" x="1110.0" y="240" font-size="16" text-anchor="middle">213 GB</text>
-<rect class="box" x="1000" y="290" width="220" height="100" rx="10" stroke-width="1.5"/><text class="t1" x="1110.0" y="320" font-size="20" font-weight="600" text-anchor="middle">Engram tables</text><text class="t2" x="1110.0" y="348" font-size="16" text-anchor="middle">384M rows × 2, 4-bit</text><text class="t2" x="1110.0" y="370" font-size="16" text-anchor="middle">115 GB</text>
-<line class="wire" x1="284" y1="215" x2="318" y2="215" stroke-width="2"/><path class="ah" d="M318 215 l-9 -5 v10 z"/>
-<line class="wire" x1="520" y1="215" x2="554" y2="215" stroke-width="2"/><path class="ah" d="M554 215 l-9 -5 v10 z"/>
-<line class="wire" x1="681" y1="270" x2="681" y2="298" stroke-width="2"/><path class="ah" d="M681 298 l-5 -9 h10 z"/>
-<line class="wire-read" x1="998" y1="215" x2="808" y2="215" stroke-width="2"/><path class="ah-read" d="M808 215 l5 9 h-10 z"/>
-<text class="accent2" x="903" y="203" font-size="16" font-weight="600" text-anchor="middle">on a miss</text>
-<text class="t2" x="903" y="242" font-size="15" text-anchor="middle">one preadv,</text>
-<text class="t3" x="903" y="260" font-size="15" text-anchor="middle">zero-copy</text>
-<line class="wire-read" x1="1110" y1="390" x2="1110" y2="418" stroke-width="2" stroke-dasharray="4 4"/><line class="wire-read" x1="1110" y1="418" x2="174" y2="418" stroke-width="2" stroke-dasharray="4 4"/><line class="wire-read" x1="174" y1="418" x2="174" y2="282" stroke-width="2" stroke-dasharray="4 4"/><path class="ah-read" d="M174 272 l-5 10 h10 z"/><text class="t2" x="380" y="408" font-size="15" text-anchor="middle">Engram rows (layers 1, 14)</text>
-<text class="t1" x="48" y="484" font-size="20" font-weight="700">Where a token's 0.80 s goes</text>
-<rect class="read" x="48" y="502" width="356.5" height="34" rx="4"/>
-<rect class="ram" x="406.5" y="502" width="161.5" height="34" rx="4"/>
-<text class="t2" x="48" y="560" font-size="16">SSD wait 0.55 s (~1.8 GB)</text>
-<text class="t2" x="568" y="560" font-size="16" text-anchor="end">compute 0.25 s</text>
-<text class="t3" x="48" y="586" font-size="16">SSD-bound: a bigger cache is the lever.</text>
-<text class="t1" x="680" y="484" font-size="20" font-weight="700">Where the 24 GB go</text>
-<rect class="ram" x="680" y="502" width="191.20000000000002" height="34" rx="4"/>
-<text class="t2" x="682" y="560" font-size="16">weights 8.4 GB</text>
-<rect class="read" x="874.2" y="502" width="149.79999999999998" height="34" rx="4"/>
-<text class="t2" x="875.2" y="560" font-size="16">cache ≤6.6 GB</text>
-<rect class="disk" x="1026.0" y="502" width="205.0" height="34" rx="4"/>
-<text class="t2" x="1027.0" y="560" font-size="16">macOS ≥9 GB</text>
-<text class="t3" x="680" y="586" font-size="16">The cache sizes itself at start-up.</text>
+<rect class="card" x="0.5" y="0.5" width="1279" height="689" rx="16"/>
+<text class="t1" x="48" y="60" font-size="28" font-weight="700">One layer of a decode step (×40 per token)</text>
+<text class="t2" x="48" y="92" font-size="19">Dense weights stay in memory. Missing experts are read from the SSD; the next layer's likely experts follow them.</text>
+<rect class="gpu" x="40" y="120" width="780" height="340" rx="14" stroke-width="1.5" stroke-dasharray="6 5"/>
+<text class="accent" x="62" y="150" font-size="17" font-weight="700" letter-spacing="1">UNIFIED MEMORY · GPU</text>
+<rect class="ssdbox" x="990" y="120" width="250" height="340" rx="14" stroke-width="1.5" stroke-dasharray="6 5"/>
+<text class="accent2" x="1010" y="150" font-size="17" font-weight="700" letter-spacing="1">INTERNAL SSD</text>
+<rect class="box" x="62" y="172" width="220" height="120" rx="10" stroke-width="1.5"/><text class="t1" x="172.0" y="206" font-size="21" font-weight="600" text-anchor="middle">Attention</text><text class="t2" x="172.0" y="234" font-size="17" text-anchor="middle">sparse attention,</text><text class="t2" x="172.0" y="259" font-size="17" text-anchor="middle">indexer, mHC</text>
+<rect class="box" x="312" y="172" width="200" height="120" rx="10" stroke-width="1.5"/><text class="t1" x="412.0" y="206" font-size="21" font-weight="600" text-anchor="middle">Router</text><text class="t2" x="412.0" y="234" font-size="17" text-anchor="middle">6 of 384 experts</text><text class="t2" x="412.0" y="259" font-size="17" text-anchor="middle">+ next layer's guess</text>
+<rect class="box" x="542" y="172" width="256" height="120" rx="10" stroke-width="1.5"/><text class="t1" x="670.0" y="206" font-size="21" font-weight="600" text-anchor="middle">Expert cache</text><text class="t2" x="670.0" y="234" font-size="17" text-anchor="middle">LRU slots in MLX slabs</text><text class="t2" x="670.0" y="259" font-size="17" text-anchor="middle">guesses enter cold</text>
+<rect class="box" x="542" y="318" width="256" height="104" rx="10" stroke-width="1.5"/><text class="t1" x="670.0" y="352" font-size="21" font-weight="600" text-anchor="middle">gather_qmm</text><text class="t2" x="670.0" y="380" font-size="17" text-anchor="middle">all experts of the layer,</text><text class="t2" x="670.0" y="405" font-size="17" text-anchor="middle">one quantized matmul</text>
+<rect class="box" x="1008" y="172" width="214" height="120" rx="10" stroke-width="1.5"/><text class="t1" x="1115.0" y="206" font-size="21" font-weight="600" text-anchor="middle">Routed experts</text><text class="t2" x="1115.0" y="234" font-size="17" text-anchor="middle">40 × 384, 2–4-bit</text><text class="t2" x="1115.0" y="259" font-size="17" text-anchor="middle">208 GB</text>
+<rect class="box" x="1008" y="318" width="214" height="104" rx="10" stroke-width="1.5"/><text class="t1" x="1115.0" y="352" font-size="21" font-weight="600" text-anchor="middle">Engram tables</text><text class="t2" x="1115.0" y="380" font-size="17" text-anchor="middle">4-bit rows</text><text class="t2" x="1115.0" y="405" font-size="17" text-anchor="middle">114 GB</text>
+<line class="wire" x1="282" y1="232" x2="310" y2="232" stroke-width="2.5"/><path class="ah" d="M310 232 l-11 -6 v12 z"/>
+<line class="wire" x1="512" y1="232" x2="540" y2="232" stroke-width="2.5"/><path class="ah" d="M540 232 l-11 -6 v12 z"/>
+<line class="wire" x1="670" y1="292" x2="670" y2="316" stroke-width="2.5"/><path class="ah" d="M670 316 l-6 -11 h12 z"/>
+<line class="wire-read" x1="1006" y1="205" x2="800" y2="205" stroke-width="2.5"/><path class="ah-read" d="M800 205 l11 -6 v12 z"/>
+<line class="wire-spec" x1="1006" y1="262" x2="800" y2="262" stroke-width="2.5"/><path class="ah-spec" d="M800 262 l11 -6 v12 z"/>
+<text class="accent2" x="903" y="195" font-size="17" font-weight="600" text-anchor="middle">misses</text>
+<text class="accent3" x="903" y="292" font-size="17" font-weight="600" text-anchor="middle">next layer's</text>
+<text class="accent3" x="903" y="314" font-size="17" font-weight="600" text-anchor="middle">guesses, after</text>
+<text class="accent3" x="903" y="336" font-size="17" font-weight="600" text-anchor="middle">misses land</text>
+<line class="wire-read" x1="1115" y1="422" x2="1115" y2="444" stroke-width="2" stroke-dasharray="5 4"/><line class="wire-read" x1="1115" y1="444" x2="172" y2="444" stroke-width="2" stroke-dasharray="5 4"/><line class="wire-read" x1="172" y1="444" x2="172" y2="306" stroke-width="2" stroke-dasharray="5 4"/><path class="ah-read" d="M172 294 l-6 12 h12 z"/>
+<text class="t2" x="330" y="434" font-size="16" text-anchor="middle">Engram rows (layers 1, 14)</text>
+<text class="t1" x="48" y="520" font-size="21" font-weight="700">One token: 0.82 s (1.23 tok/s)</text>
+<rect class="read" x="48" y="538" width="278.2818075299629" height="38" rx="4"/>
+<rect class="ram" x="329.2818075299629" y="538" width="258.7181924700371" height="38" rx="4"/>
+<text class="t2" x="48" y="606" font-size="17">SSD wait 0.42 s</text>
+<text class="t2" x="588" y="606" font-size="17" text-anchor="end">compute 0.39 s</text>
+<text class="t3" x="48" y="636" font-size="17">5.5 GB cache · per token 1.2 GB needed, 0.8 GB read ahead</text>
+<text class="t1" x="680" y="520" font-size="21" font-weight="700">Where the 24 GB go</text>
+<rect class="ram" x="680" y="538" width="171.79999999999998" height="38" rx="4"/>
+<text class="t2" x="682" y="606" font-size="17">weights 7.6 GB</text>
+<rect class="read" x="856.3" y="538" width="123.5" height="38" rx="4"/>
+<text class="t2" x="856.8" y="606" font-size="17">cache 5.5 GB</text>
+<rect class="disk" x="982.8" y="538" width="247.69999999999996" height="38" rx="4"/>
+<text class="t2" x="983.3" y="606" font-size="17">macOS, apps, KV ≥9 GB</text>
+<text class="t3" x="680" y="636" font-size="17">The cache sizes itself so that macOS keeps ≥ 9 GB.</text>
 </svg>

@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="610" viewBox="0 0 1280 610" role="img" aria-label="Decode timeline with and without idle-window speculation">
+<title>Decode timeline with and without idle-window speculation</title>
+<style>
+  .card { fill: #fcfcfb; stroke: #e4e3df; }
+  .t1 { fill: #0b0b0b; } .t2 { fill: #52514e; } .t3 { fill: #7a7974; }
+  .ram { fill: #2a78d6; } .read { fill: #eb6834; } .spec { fill: #1baf7a; } .disk { fill: #dcdad3; } .attn { fill: #b9b7af; }
+  .gpu { fill: #e9f1fc; stroke: #2a78d6; } .ssdbox { fill: #fdf0ea; stroke: #eb6834; }
+  .box { fill: #ffffff; stroke: #c9c7bf; } .wire { stroke: #8a8984; } .ah { fill: #8a8984; }
+  .wire-read { stroke: #eb6834; } .ah-read { fill: #eb6834; } .wire-spec { stroke: #1baf7a; } .ah-spec { fill: #1baf7a; }
+  .accent { fill: #1c5cab; } .accent2 { fill: #c4501f; } .accent3 { fill: #11805a; }
+  .grid { stroke: #e4e3df; } .axis { stroke: #8a8984; }
+  .l-ov { stroke: #2a78d6; } .l-iw { stroke: #1baf7a; } .d-ov { fill: #2a78d6; } .d-iw { fill: #1baf7a; }
+  .ring { stroke: #fcfcfb; }
+  @media (prefers-color-scheme: dark) {
+    .card { fill: #161b22; stroke: #30363d; }
+    .t1 { fill: #f0efec; } .t2 { fill: #c3c2b7; } .t3 { fill: #94938c; }
+    .ram { fill: #3987e5; } .read { fill: #d95926; } .spec { fill: #199e70; } .disk { fill: #3a3a37; } .attn { fill: #5b5a55; }
+    .gpu { fill: #14243a; stroke: #3987e5; } .ssdbox { fill: #2e1c14; stroke: #d95926; }
+    .box { fill: #0d1117; stroke: #484f58; } .wire { stroke: #8b949e; } .ah { fill: #8b949e; }
+    .wire-read { stroke: #e0703f; } .ah-read { fill: #e0703f; } .wire-spec { stroke: #2bbd88; } .ah-spec { fill: #2bbd88; }
+    .accent { fill: #86b6ef; } .accent2 { fill: #f08a5d; } .accent3 { fill: #5fd3a6; }
+    .grid { stroke: #30363d; } .axis { stroke: #8b949e; }
+    .l-ov { stroke: #3987e5; } .l-iw { stroke: #2bbd88; } .d-ov { fill: #3987e5; } .d-iw { fill: #2bbd88; }
+    .ring { stroke: #161b22; }
+  }
+  text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'PingFang SC', 'Noto Sans Mono CJK SC', monospace; }
+</style>
+<rect class="card" x="0.5" y="0.5" width="1279" height="609" rx="16"/>
+<text class="t1" x="48" y="58" font-size="28" font-weight="700">Filling the SSD's idle time</text>
+<text class="t2" x="48" y="90" font-size="19">Four decode layers from real traces (5 GB cache). Without speculation, the SSD waits while the GPU works.</text>
+<text class="t1" x="48" y="144" font-size="21" font-weight="600">Without speculation</text>
+<text class="t2" x="1230" y="144" font-size="18" text-anchor="end">SSD busy 62% of the step</text>
+<text class="t2" x="48" y="191" font-size="18">GPU</text><text class="t2" x="48" y="253" font-size="18">SSD</text>
+<rect class="disk" x="150" y="224" width="1080" height="44" rx="4" opacity="0.45"/>
+<rect class="attn" x="150.0" y="162" width="84.40000000000009" height="44" rx="4"/>
+<rect class="ram" x="237.33825054354975" y="162" width="32.410346483811736" height="44" rx="4"/>
+<rect class="ram" x="394.7855960983784" y="162" width="22.781250905245543" height="44" rx="4"/>
+<rect class="attn" x="417.56684700362393" y="162" width="48.912549486383796" height="44" rx="4"/>
+<rect class="ram" x="469.28714960217485" y="162" width="34.789500245824456" height="44" rx="4"/>
+<rect class="ram" x="576.2377463221551" y="162" width="20.339100854471326" height="44" rx="4"/>
+<rect class="attn" x="596.5768471766264" y="162" width="41.24230342172086" height="44" rx="4"/>
+<rect class="ram" x="640.7493004515768" y="162" width="30.004203831776977" height="44" rx="4"/>
+<rect class="ram" x="848.5664970181882" y="162" width="26.946906745433807" height="44" rx="4"/>
+<rect class="attn" x="875.513403763622" y="162" width="55.37500060349703" height="44" rx="4"/>
+<rect class="ram" x="933.9553468801081" y="162" width="35.22330271080136" height="44" rx="4"/>
+<rect class="ram" x="1143.3997461978347" y="162" width="37.53315364010609" height="44" rx="4"/>
+<rect class="read" x="238.25984708368787" y="224" width="156.35790643282235" height="44" rx="4"/>
+<rect class="read" x="470.24475354105243" y="224" width="105.84404971450567" height="44" rx="4"/>
+<rect class="read" x="641.6627963013948" y="224" width="206.7772542592137" height="44" rx="4"/>
+<rect class="read" x="934.843204164505" y="224" width="208.42469553463172" height="44" rx="4"/>
+<text class="t1" x="48" y="334" font-size="21" font-weight="600">Idle-window speculation</text>
+<text class="t2" x="1230" y="334" font-size="18" text-anchor="end">SSD busy 73% of the step</text>
+<text class="t2" x="48" y="381" font-size="18">GPU</text><text class="t2" x="48" y="443" font-size="18">SSD</text>
+<rect class="disk" x="150" y="414" width="1080" height="44" rx="4" opacity="0.45"/>
+<rect class="attn" x="150.0" y="352" width="84.40000000000009" height="44" rx="4"/>
+<rect class="ram" x="237.45389566160748" y="352" width="48.24315765872598" height="44" rx="4"/>
+<rect class="ram" x="344.1569995075465" y="352" width="22.24079668521881" height="44" rx="4"/>
+<rect class="attn" x="366.3977961927653" y="352" width="94.53355279006064" height="44" rx="4"/>
+<rect class="ram" x="463.92270349301407" y="352" width="54.92204921320081" height="44" rx="4"/>
+<rect class="ram" x="519.9953964851798" y="352" width="17.469906248152256" height="44" rx="4"/>
+<rect class="attn" x="537.465302733332" y="352" width="92.25879269838333" height="44" rx="4"/>
+<rect class="ram" x="632.8139997493477" y="352" width="48.646796587854624" height="44" rx="4"/>
+<rect class="ram" x="741.5753993611784" y="352" width="24.968249956145883" height="44" rx="4"/>
+<rect class="attn" x="766.5436493173243" y="352" width="88.69345421157766" height="44" rx="4"/>
+<rect class="ram" x="858.1636462301016" y="352" width="46.54710344038904" height="44" rx="4"/>
+<rect class="ram" x="967.4879954136908" y="352" width="25.606357539072633" height="44" rx="4"/>
+<rect class="read" x="238.54514904655525" y="414" width="105.43454680591822" height="44" rx="4"/>
+<rect class="read" x="465.12285288758585" y="414" width="54.26730019971728" height="44" rx="4"/>
+<rect class="read" x="634.1324961684645" y="414" width="107.27910026907921" height="44" rx="4"/>
+<rect class="read" x="859.7566457871347" y="414" width="107.5531495269388" height="44" rx="4"/>
+<rect class="spec" x="150.0" y="414" width="2" height="44" rx="4"/>
+<rect class="spec" x="346.1630990669132" y="414" width="56.95110051892698" height="44" rx="4"/>
+<rect class="spec" x="521.1662989050151" y="414" width="106.30170037038624" height="44" rx="4"/>
+<rect class="spec" x="743.2102489225567" y="414" width="105.98399690352369" height="44" rx="4"/>
+<text class="t3" x="150.0" y="538" font-size="16" text-anchor="middle">0 ms</text>
+<text class="t3" x="366.0" y="538" font-size="16" text-anchor="middle">20 ms</text>
+<text class="t3" x="582.0" y="538" font-size="16" text-anchor="middle">40 ms</text>
+<text class="t3" x="798.0" y="538" font-size="16" text-anchor="middle">60 ms</text>
+<text class="t3" x="1014.0" y="538" font-size="16" text-anchor="middle">80 ms</text>
+<text class="t3" x="1230.0" y="538" font-size="16" text-anchor="middle">100 ms</text>
+<rect class="attn" x="150" y="569" width="16" height="16" rx="4"/><text class="t2" x="174" y="582" font-size="18">attention + router</text><rect class="ram" x="376.79999999999995" y="569" width="16" height="16" rx="4"/><text class="t2" x="400.79999999999995" y="582" font-size="18">expert compute</text><rect class="read" x="565.1999999999999" y="569" width="16" height="16" rx="4"/><text class="t2" x="589.1999999999999" y="582" font-size="18">needed reads</text><rect class="spec" x="734.3999999999999" y="569" width="16" height="16" rx="4"/><text class="t2" x="758.3999999999999" y="582" font-size="18">read-ahead</text>
+</svg>

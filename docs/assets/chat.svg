@@ -3,19 +3,25 @@
 <style>
   .card { fill: #fcfcfb; stroke: #e4e3df; }
   .t1 { fill: #0b0b0b; } .t2 { fill: #52514e; } .t3 { fill: #7a7974; }
-  .ram { fill: #2a78d6; } .read { fill: #eb6834; } .disk { fill: #dcdad3; }
+  .ram { fill: #2a78d6; } .read { fill: #eb6834; } .spec { fill: #1baf7a; } .disk { fill: #dcdad3; } .attn { fill: #b9b7af; }
   .gpu { fill: #e9f1fc; stroke: #2a78d6; } .ssdbox { fill: #fdf0ea; stroke: #eb6834; }
   .box { fill: #ffffff; stroke: #c9c7bf; } .wire { stroke: #8a8984; } .ah { fill: #8a8984; }
-  .wire-read { stroke: #eb6834; } .ah-read { fill: #eb6834; }
-  .accent { fill: #1c5cab; } .accent2 { fill: #c4501f; }
+  .wire-read { stroke: #eb6834; } .ah-read { fill: #eb6834; } .wire-spec { stroke: #1baf7a; } .ah-spec { fill: #1baf7a; }
+  .accent { fill: #1c5cab; } .accent2 { fill: #c4501f; } .accent3 { fill: #11805a; }
+  .grid { stroke: #e4e3df; } .axis { stroke: #8a8984; }
+  .l-ov { stroke: #2a78d6; } .l-iw { stroke: #1baf7a; } .d-ov { fill: #2a78d6; } .d-iw { fill: #1baf7a; }
+  .ring { stroke: #fcfcfb; }
   @media (prefers-color-scheme: dark) {
     .card { fill: #161b22; stroke: #30363d; }
     .t1 { fill: #f0efec; } .t2 { fill: #c3c2b7; } .t3 { fill: #94938c; }
-    .ram { fill: #3987e5; } .read { fill: #d95926; } .disk { fill: #3a3a37; }
+    .ram { fill: #3987e5; } .read { fill: #d95926; } .spec { fill: #199e70; } .disk { fill: #3a3a37; } .attn { fill: #5b5a55; }
     .gpu { fill: #14243a; stroke: #3987e5; } .ssdbox { fill: #2e1c14; stroke: #d95926; }
     .box { fill: #0d1117; stroke: #484f58; } .wire { stroke: #8b949e; } .ah { fill: #8b949e; }
-    .wire-read { stroke: #e0703f; } .ah-read { fill: #e0703f; }
-    .accent { fill: #86b6ef; } .accent2 { fill: #f08a5d; }
+    .wire-read { stroke: #e0703f; } .ah-read { fill: #e0703f; } .wire-spec { stroke: #2bbd88; } .ah-spec { fill: #2bbd88; }
+    .accent { fill: #86b6ef; } .accent2 { fill: #f08a5d; } .accent3 { fill: #5fd3a6; }
+    .grid { stroke: #30363d; } .axis { stroke: #8b949e; }
+    .l-ov { stroke: #3987e5; } .l-iw { stroke: #2bbd88; } .d-ov { fill: #3987e5; } .d-iw { fill: #2bbd88; }
+    .ring { stroke: #161b22; }
   }
   text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif; }
   .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'PingFang SC', 'Noto Sans Mono CJK SC', monospace; }
