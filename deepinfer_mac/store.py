@@ -48,6 +48,7 @@ class Slab:
         self.lru: OrderedDict[tuple[str, int], int] = OrderedDict()  # (key, expert) -> slot
         self.free = list(range(slots))
         self.pins: list[set[int]] = [set(), set()]
+        self.busy: set[int] = set()  # slots of a get_slots call in progress (speculation runs concurrently)
 
     def iovecs(self, slot: int) -> list[memoryview]:
         return [self.mem[n][slot * self.nbytes[n] : (slot + 1) * self.nbytes[n]] for n in self.order]
@@ -89,6 +90,7 @@ class ExpertStore:
         self.inflight: dict[tuple[str, int], Future] = {}
         self.lock = threading.Lock()
         self.pool = ThreadPoolExecutor(threads, thread_name_prefix="expert-io")
+        self.spec_pool = ThreadPoolExecutor(1, thread_name_prefix="expert-spec")
         self._pad = threading.local()
         self.stats = {"hits": 0, "misses": 0, "prefetch_hits": 0, "bytes": 0, "wait_s": 0.0}
         self._prefetched: set[tuple[str, int]] = set()
@@ -157,7 +159,7 @@ class ExpertStore:
     def _take_slot(self, slab: Slab, optional: bool, protect: set[int] = frozenset()) -> int | None:
         if slab.free:
             return slab.free.pop()
-        pinned = slab.pins[0] | slab.pins[1] | protect
+        pinned = slab.pins[0] | slab.pins[1] | slab.busy | protect
         for k, slot in slab.lru.items():  # oldest first
             if slot in pinned:
                 continue
@@ -173,10 +175,11 @@ class ExpertStore:
             return None
         raise MemoryError("expert cache too small for one layer's experts; raise --cache-gb")
 
-    def prefetch(self, key: str, ids, optional: bool = False) -> None:
+    def prefetch(self, key: str, ids, optional: bool = False, cold: bool = False) -> None:
         """Start reads for experts not resident. `optional` (lookahead) never evicts pinned
         slots and silently skips when the slab is full. Experts of this same request that are
-        already resident are never evicted to make room for the others."""
+        already resident are never evicted to make room for the others. `cold` inserts at the
+        LRU end that is evicted first, so a wrong guess displaces nothing that was used."""
         slab = self.slabs[key]
         ids = [int(e) for e in ids]
         with self.lock:
@@ -189,6 +192,8 @@ class ExpertStore:
                 if slot is None:
                     return
                 slab.lru[k] = slot
+                if cold:
+                    slab.lru.move_to_end(k, last=False)
                 protect.add(slot)
                 if self.IO_SPLIT > 1:
                     parts = [self.pool.submit(self._read_part, key, e, slot, i, self.IO_SPLIT) for i in range(self.IO_SPLIT)]
@@ -198,6 +203,22 @@ class ExpertStore:
                 self.stats["bytes"] += self.layouts[key].nbytes
                 if optional:
                     self._prefetched.add(k)
+
+    def speculate(self, key: str, ids, after) -> None:
+        """Idle-window speculation: read `ids` of layer `key` only once the reads in `after`
+        (the current layer's demand misses) have landed, i.e. while the GPU computes and the SSD
+        would otherwise be idle; inserted cold, so mispredictions never evict a used expert."""
+        futs = [f for f in after if f is not None]
+
+        def go():
+            for f in futs:
+                try:
+                    f.result()
+                except Exception:  # noqa: BLE001 - the demand path reports read errors
+                    pass
+            self.prefetch(key, ids, optional=True, cold=True)
+
+        self.spec_pool.submit(go)
 
     def resident(self, key: str, e: int) -> bool:
         k = (key, int(e))
@@ -211,12 +232,16 @@ class ExpertStore:
         with self.lock:
             for e in ids:
                 k = (key, e)
-                if k in slab.lru and k not in self.inflight:
+                fut = self.inflight.get(k)
+                if k in slab.lru and (fut is None or fut.done()):
                     self.stats["prefetch_hits" if k in self._prefetched else "hits"] += 1
                 else:
                     self.stats["misses"] += 1
                 self._prefetched.discard(k)
         self.prefetch(key, ids)
+        with self.lock:
+            mine = {slab.lru[(key, e)] for e in ids}
+            slab.busy |= mine
         slots = []
         for e in ids:
             k = (key, e)
@@ -230,7 +255,9 @@ class ExpertStore:
             with self.lock:
                 slab.lru.move_to_end(k)
                 slots.append(slab.lru[k])
-        slab.pins = [slab.pins[1], set(slots)]
+        with self.lock:
+            slab.pins = [slab.pins[1], set(slots)]
+            slab.busy -= mine
         return slab, slots
 
     def get(self, key: str, ids) -> list[ExpertWeights]:

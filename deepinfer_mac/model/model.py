@@ -574,6 +574,7 @@ class MoE:
     OVERLAP = True  # decode: compute resident experts while the misses load
     LOOKAHEAD = False
     LOOKAHEAD_K = 0  # 0 = all predicted experts
+    SPEC_K = 3  # idle-window speculation: guess k next-layer experts, read after this layer's misses (0 = off)
     SKIP_MISS_BELOW = 0.0  # opt-in, see _prune
     PREFILL_TOPK = 0  # opt-in, see _prune
     PREFILL_KEEP = 140  # measured no gain when SSD-bound; flash-moe saw speculative routing cost 38%
@@ -637,6 +638,10 @@ class MoE:
         ids = [e for e in np.unique(idx_np).tolist() if e >= 0]
         if x.shape[0] == 1 and self.OVERLAP:
             self.experts.prefetch(self.key, ids)
+            spec = getattr(self, "_spec", None)
+            if spec is not None:  # after this layer's demand reads, never ahead of them
+                self._spec = None
+                self.experts.speculate(spec[0], spec[1], [self.experts.inflight.get((self.key, e)) for e in ids])
             hits = [e for e in ids if self.experts.resident(self.key, e)]
             groups = [g for g in (hits, [e for e in ids if e not in hits]) if g]
         elif x.shape[0] == 1:
@@ -699,6 +704,12 @@ class MoE:
             pred = mx.argpartition(-sc, kth=k - 1, axis=-1)[:, :k]
             idx_np, pred_np = (np.array(a) for a in (idx, pred))
             self.experts.prefetch(nxt.key, pred_np[0].tolist(), optional=True)
+        elif nxt is not None and self.SPEC_K and x.shape[0] == 1 and hasattr(self.experts, "speculate"):
+            # the next layer's router (its exact scoring) on this layer's input; one sync for both
+            sc = mx.sqrt(mx.logaddexp(x[-1:].astype(mx.float32) @ nxt.gate_w.T, 0.0)) + nxt.bias
+            pred = mx.argpartition(-sc, kth=self.SPEC_K - 1, axis=-1)[:, : self.SPEC_K]
+            idx_np, pred_np = (np.array(a) for a in (idx, pred))
+            self._spec = (nxt.key, pred_np[0].tolist())
         else:
             idx_np = np.array(idx)  # the one host sync per layer: which experts to fetch
         if hasattr(self.experts, "get_slots"):

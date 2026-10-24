@@ -22,6 +22,7 @@ def _llm(a):
     MoE.SKIP_MISS_BELOW = a.skip_miss
     MoE.PREFILL_TOPK = a.prefill_topk
     MoE.LOOKAHEAD, MoE.LOOKAHEAD_K = a.lookahead > 0, a.lookahead
+    MoE.SPEC_K = 0 if a.lookahead else a.spec_k
     return LLM(a.model, expert_cache_gb=a.cache_gb, speculative=a.spec or None, moe_topk=a.moe_topk)
 
 
@@ -105,6 +106,7 @@ def main(argv=None):
         p.add_argument("--skip-miss", type=float, default=0.0, help="skip a non-cached expert under this routing-weight share (e.g. 0.08); lossy")
         p.add_argument("--prefill-topk", type=int, default=0, help="experts per prompt token outside the last 140 (e.g. 4); faster TTFT, lossy")
         p.add_argument("--lookahead", type=int, default=0, help="prefetch the k most confident next-layer experts (0 = off)")
+        p.add_argument("--spec-k", type=int, default=3, help="idle-window speculation: read k guessed next-layer experts after each layer's misses, inserted cold (0 = off)")
         if name == "chat":
             p.add_argument("--think", action="store_true")
             p.add_argument("--effort", choices=["high", "max"], default=None, help="reasoning effort in thinking mode (API default: high = 75)")

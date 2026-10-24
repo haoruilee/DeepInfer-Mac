@@ -9,7 +9,7 @@
 - **Deterministic Top-K** (#10): higher score first, earlier position on ties, in both indexer levels.
 - **DoSA study** (#8): exact screening in the style of DoSA (arXiv 2610.13990) measured on real
   V4.1 indexer activations (`scripts/capture_indexer.py`, `scripts/dosa_study.py`). At 16-32K keys a
-  sound certificate costs 83-160% of plain scoring (Top-K 512 needs ~20 of 32 heads exact before
+  sound certificate still costs 74-89% of plain scoring at best (Top-K 512 needs ~20 of 32 heads exact before
   anything can be rejected; the layers after 20 are already restricted to 2048 candidate blocks),
   so it is not enabled. Worth revisiting at >=128K keys.
 

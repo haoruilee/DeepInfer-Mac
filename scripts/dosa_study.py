@@ -51,5 +51,6 @@ for L in sorted({int(x.split("_")[0][1:]) for x in z.files}):
         surv = (U >= tau) & np.isfinite(s)
         assert np.all(surv | (s < tau)), "unsound bound"
         m = len(pos) + extra + (len(ag) > 0)
-        out.append(f"m={m}: {surv.mean() * 100:4.1f}% survive, cost {(m / len(w) + surv.mean()) * 100:3.0f}%")
+        cost = m / len(w) + surv.mean() * len(ag) / len(w)
+        out.append(f"m={m}: {surv.mean() * 100:4.1f}% survive, cost {cost * 100:3.0f}%")
     print("  ".join(out))

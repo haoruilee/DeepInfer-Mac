@@ -234,7 +234,7 @@ DeepInfer-Mac 参照 DeepSeek 的 [DeepInfer](https://github.com/deepseek-ai/Dee
 ```bibtex
 @misc{deepinfermac2026,
   title = {DeepInfer-Mac: DeepSeek-V4.1-Flash on a single Apple Silicon Mac},
-  author = {haoruilee},
+  author = {Haorui Li},
   year = {2026},
   publisher = {GitHub},
   howpublished = {\url{https://github.com/haoruilee/DeepInfer-Mac}},

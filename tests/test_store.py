@@ -101,3 +101,36 @@ def test_split_reads_and_page_cache_give_identical_contents(big_store):
             _check(s, data, lay, "L00", [(i * 11 + j) % 384 for j in range(6)])
     finally:
         ExpertStore.IO_SPLIT, ExpertStore.PAGE_CACHE = saved
+
+
+def test_speculation_is_cold_and_never_evicts_used_experts(big_store):
+    """Idle-window speculation: guesses enter at the cold LRU end, so filling the slab with wrong
+    guesses evicts guesses first and never an expert a request used; contents stay correct."""
+    s, data, lay = big_store
+    slab = s.slabs["L00"]
+    used = list(range(len(slab.free) + len(slab.lru) - 20))  # nearly fill the slab with used experts
+    for i in range(0, len(used), 6):
+        _check(s, data, lay, "L00", used[i : i + 6])
+    for i in range(30):  # many more wrong guesses than free slots
+        s.speculate("L00", [300 + (i * 3 + j) % 80 for j in range(3)], after=[])
+        s.spec_pool.submit(lambda: None).result()  # let the speculation thread run
+        for f in list(s.inflight.values()):
+            f.result()
+    resident = {e for (_, e) in slab.lru}
+    assert set(used) <= resident, "a guess evicted an expert that was used"
+    _check(s, data, lay, "L00", [300, 301, 302] + used[:3])  # guesses that hit are correct data
+
+
+def test_speculation_waits_for_demand_reads(big_store):
+    s, data, lay = big_store
+    order = []
+    import concurrent.futures as cf
+    gate = cf.Future()
+    gate.add_done_callback(lambda _: order.append("demand"))
+    s.speculate("L00", [10, 11], after=[gate])
+    s.prefetch("L00", [1])  # demand traffic proceeds meanwhile
+    assert ("L00", 10) not in s.slabs["L00"].lru  # nothing speculative before the demand read lands
+    gate.set_result(None)
+    s.spec_pool.submit(lambda: None).result()
+    assert ("L00", 10) in s.slabs["L00"].lru and order == ["demand"]
+    _check(s, data, lay, "L00", [10, 11, 1])

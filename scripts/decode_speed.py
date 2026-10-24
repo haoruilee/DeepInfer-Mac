@@ -10,6 +10,7 @@ _M.MoE.LOOKAHEAD = os.environ.get("LOOKAHEAD", "0") == "1"
 _M.MoE.OVERLAP = os.environ.get("OVERLAP", "1") == "1"
 _M.MoE.LOOKAHEAD_K = int(os.environ.get("LOOKAHEAD_K", "0"))
 _M.MoE.SKIP_MISS_BELOW = float(os.environ.get("SKIP_MISS", "0"))
+_M.MoE.SPEC_K = int(os.environ.get("SPEC_K", "0"))
 _M.MoE.PREFILL_TOPK = int(os.environ.get("PREFILL_TOPK", "0"))
 _M.MoE.LOOKAHEAD = _M.MoE.LOOKAHEAD or _M.MoE.LOOKAHEAD_K > 0
 llm = LLM(expert_cache_gb=float(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1][0].isdigit() else None)
