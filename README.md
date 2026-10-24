@@ -175,7 +175,7 @@ MacBook Air M4, 24 GB, internal SSD, macOS 26 — everything else closed:
 
 | | |
 | :--- | :--- |
-| Decode | **1.25 tok/s** (median of 3 runs; 0.80 s/token, of which 0.55 s is SSD wait) |
+| Decode | **up to 1.37 tok/s** with idle-window speculation (6.5 GB expert cache; 1.24 at 5.5 GB). Without it 1.07–1.25 tok/s, of which ~0.55 s per token is SSD wait |
 | Time to first token: 14-token prompt / 1K / 16K | 10 s / ~49 s / ~8 min |
 | Follow-up chat turns | prefill only the new tokens |
 | SSD expert streaming | 2.8–3.15 GB/s; ~1.8 GB of expert reads per token at a 49% cache hit rate |
@@ -197,6 +197,7 @@ Reproduce with `python scripts/decode_speed.py --real-engram` and `python -m dee
 | `--skip-miss 0.08` | off | Skip an uncached expert carrying < 8% of a token's routing weight. Measured: +19% decode speed, top-1 agreement 91.2% → 88.8%. |
 | `--skip-miss 0.12` | off | +29% decode speed, agreement 88.8%, NLL +13%. |
 | `--prefill-topk 4` | off | Route prompt tokens outside the last 140 to their top-4 experts (lossy; helps only short-to-medium prompts). |
+| `--spec-k K` | 3 | Idle-window speculation: after each layer's misses land, read the next layer's K most likely experts while the GPU computes, inserted at the cold end of the cache. +12–29% decode speed at every cache size from 2.5 to 6.5 GB; outputs unchanged. `0` turns it off. |
 | `--lookahead K` | off | Prefetch the K most confident next-layer experts. Measured 6% slower at K=2 on this SSD-bound machine; may help on faster SSDs. |
 | `--moe-topk N` | 6 | Experts per token for every token (lossy). |
 | `--spec` | off | DSpark speculative decoding (cumulative-confidence draft ranking, as DeepInfer). A throughput chooser measures speculative vs. plain steps and keeps the faster: on this 24 GB Air speculation loses (verification streams the union of the drafts' experts), so it settles on plain decoding — 1.14 tok/s. |

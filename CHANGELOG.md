@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Idle-window speculation (on by default, `--spec-k 3`).** After each layer's demand reads land,
+  read the next layer's 3 most likely experts (its own router on this layer's input) while the GPU
+  computes, and insert them at the cold end of the LRU. Decode +12–29% at every cache size from
+  2.5 to 6.5 GB (up to 1.37 tok/s); greedy outputs identical. The old `--lookahead` was 6% slower
+  because its guesses queued ahead of demand reads and evicted used experts.
 - **Indexer 2x faster in long prefill, bit-identical.** The indexer's queries and keys are fp4 values
   with power-of-two scales, so a bf16 matmul (fp32 accumulation, one rounding) equals the reference's
   fp32 einsum + cast; the ReLU / head-weight / head-sum chain is one Metal pass instead of three over
