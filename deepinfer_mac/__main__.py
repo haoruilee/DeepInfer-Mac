@@ -100,7 +100,7 @@ def main(argv=None):
     for name in ("chat", "serve", "bench"):
         p = sub.add_parser(name)
         p.add_argument("--model", default=str(DEFAULT_MODEL_DIR))
-        p.add_argument("--cache-gb", type=float, default=None, help="expert cache size (default: free RAM after dense weights - 7 GB)")
+        p.add_argument("--cache-gb", type=float, default=None, help="expert cache size (default: free memory - dense weights - 4 GB, keeping >= 9 GB for macOS)")
         p.add_argument("--spec", action="store_true", help="DSpark speculative decoding")
         p.add_argument("--moe-topk", type=int, default=None, help="experts per token (model: 6); fewer = faster, lossy")
         p.add_argument("--skip-miss", type=float, default=0.0, help="skip a non-cached expert under this routing-weight share (e.g. 0.08); lossy")

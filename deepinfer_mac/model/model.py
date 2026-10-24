@@ -540,6 +540,7 @@ def topk_positions(score: mx.array, k: int) -> mx.array:
     score first, the earlier position on ties. A total order makes the selection independent of
     the partition kernel (and lets an exact pruned search reproduce it, see dosa.py)."""
     score = mx.where(score == 0, 0.0, score)  # -0 ties with +0
+    score = mx.where(mx.isnan(score), -mx.inf, score)  # a NaN score is never selected
     b = score.astype(mx.bfloat16).view(mx.uint16).astype(mx.int64)
     key = mx.where(b >= 0x8000, 0xFFFF - b, b | 0x8000)  # monotone in the bf16 value
     pos = mx.arange(score.shape[-1], dtype=mx.int64)

@@ -4,14 +4,16 @@
 
 - **Idle-window speculation (on by default, `--spec-k 3`).** After each layer's demand reads land,
   read the next layer's 3 most likely experts (its own router on this layer's input) while the GPU
-  computes, and insert them at the cold end of the LRU. Decode +12–29% at every cache size from
-  2.5 to 6.5 GB (up to 1.37 tok/s); greedy outputs identical. The old `--lookahead` was 6% slower
+  computes, and insert them at the cold end of the LRU. Decode +11–27% at every cache size from
+  2.5 to 6.5 GB (up to 1.35 tok/s, interleaved measurements); greedy outputs identical. An ablation
+  shows waiting for the demand reads gives most of the gain. The old `--lookahead` was 6% slower
   because its guesses queued ahead of demand reads and evicted used experts.
 - **Indexer 2x faster in long prefill, bit-identical.** The indexer's queries and keys are fp4 values
   with power-of-two scales, so a bf16 matmul (fp32 accumulation, one rounding) equals the reference's
   fp32 einsum + cast; the ReLU / head-weight / head-sum chain is one Metal pass instead of three over
   the [rows, heads, keys] tensor (16x). Checked on 436M real scores at 16-32K: zero differences.
-- **Deterministic Top-K** (#10): higher score first, earlier position on ties, in both indexer levels.
+- **Deterministic Top-K** (#10): higher score first, earlier position on ties, in both indexer levels;
+  NaN scores are never selected.
 - **DoSA study** (#8): exact screening in the style of DoSA (arXiv 2610.13990) measured on real
   V4.1 indexer activations (`scripts/capture_indexer.py`, `scripts/dosa_study.py`). At 16-32K keys a
   sound certificate still costs 74-89% of plain scoring at best (Top-K 512 needs ~20 of 32 heads exact before

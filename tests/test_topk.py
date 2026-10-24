@@ -58,3 +58,9 @@ def test_index_head_sum_matches_elementwise():
         sv = s[:, :, ::2]  # non-contiguous input
         ref = (mx.maximum(sv, 0) * w[..., None]).astype(bf).astype(mx.float32).sum(axis=1).astype(bf)
         assert bool(mx.all(index_head_sum(sv, w) == ref))
+
+
+def test_nan_scores_are_never_selected():
+    s = np.array([[np.nan, 1.0, -np.nan, 2.0, 0.5, np.nan]], dtype=np.float32)
+    got = set(np.array(topk_positions(mx.array(s), 3))[0].tolist())
+    assert got == {1, 3, 4}

@@ -92,7 +92,7 @@ class ExpertStore:
         self.pool = ThreadPoolExecutor(threads, thread_name_prefix="expert-io")
         self.spec_pool = ThreadPoolExecutor(1, thread_name_prefix="expert-spec")
         self._pad = threading.local()
-        self.stats = {"hits": 0, "misses": 0, "prefetch_hits": 0, "bytes": 0, "wait_s": 0.0}
+        self.stats = {"hits": 0, "misses": 0, "prefetch_hits": 0, "bytes": 0, "spec_bytes": 0, "wait_s": 0.0}
         self._prefetched: set[tuple[str, int]] = set()
 
     # -- IO
@@ -202,13 +202,21 @@ class ExpertStore:
                     self.inflight[k] = self.pool.submit(self._read, key, e, slot)
                 self.stats["bytes"] += self.layouts[key].nbytes
                 if optional:
+                    self.stats["spec_bytes"] += self.layouts[key].nbytes
+                if optional:
                     self._prefetched.add(k)
+
+    SPEC_WAIT = True  # ablation switches: issue guesses only after the demand reads land ...
+    SPEC_COLD = True  # ... and insert them at the cold end of the LRU
 
     def speculate(self, key: str, ids, after) -> None:
         """Idle-window speculation: read `ids` of layer `key` only once the reads in `after`
         (the current layer's demand misses) have landed, i.e. while the GPU computes and the SSD
         would otherwise be idle; inserted cold, so mispredictions never evict a used expert."""
-        futs = [f for f in after if f is not None]
+        futs = [f for f in after if f is not None] if self.SPEC_WAIT else []
+        if not self.SPEC_WAIT:  # ablation: guesses go straight to the I/O queue, like naive prefetch
+            self.prefetch(key, ids, optional=True, cold=self.SPEC_COLD)
+            return
 
         def go():
             for f in futs:
@@ -216,7 +224,7 @@ class ExpertStore:
                     f.result()
                 except Exception:  # noqa: BLE001 - the demand path reports read errors
                     pass
-            self.prefetch(key, ids, optional=True, cold=True)
+            self.prefetch(key, ids, optional=True, cold=self.SPEC_COLD)
 
         self.spec_pool.submit(go)
 
