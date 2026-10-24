@@ -17,7 +17,7 @@ DeepInfer-Mac runs **DeepSeek-V4.1-Flash** (754B parameters) on a single Apple S
 tested on a **MacBook Air M4 with 24 GB** of unified memory. It re-implements the model-side features
 of DeepSeek's [DeepInfer](https://github.com/deepseek-ai/DeepInfer) on [MLX](https://github.com/ml-explore/mlx),
 and replaces DeepInfer's multi-GPU expert parallelism with **SSD expert streaming**: the resident dense
-weights take 8 GB, and the 6 routed experts each layer picks per token are read from the SSD on demand.
+weights take 7.6 GB, and the 6 routed experts each layer picks per token are read from the SSD on demand.
 
 > This is an independent community project. It is not affiliated with or endorsed by DeepSeek.
 

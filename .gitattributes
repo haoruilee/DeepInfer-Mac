@@ -1,0 +1,3 @@
+paper/** linguist-documentation
+*.sty linguist-vendored
+*.bst linguist-vendored

@@ -16,7 +16,7 @@
 DeepInfer-Mac 在一台 Apple Silicon Mac 上运行 **DeepSeek-V4.1-Flash**（7540 亿参数）——在
 **24 GB 统一内存的 MacBook Air M4** 上开发与测试。它基于 [MLX](https://github.com/ml-explore/mlx)
 复现了 DeepSeek [DeepInfer](https://github.com/deepseek-ai/DeepInfer) 的模型侧能力，并用 **SSD 专家流式加载**
-替代 DeepInfer 的多卡专家并行：常驻的稠密权重占 8 GB，每层每个 token 选中的 6 个路由专家按需从 SSD 读取。
+替代 DeepInfer 的多卡专家并行：常驻的稠密权重占 7.6 GB，每层每个 token 选中的 6 个路由专家按需从 SSD 读取。
 
 > 本项目为独立的社区项目，与 DeepSeek 官方无关，也未获其背书。
 
