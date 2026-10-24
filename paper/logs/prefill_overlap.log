@@ -1,0 +1,6 @@
+pipelined on : 73.4s
+pipelined off: 128.8s
+pipelined off: 93.8s
+pipelined on : 149.1s
+mean pipelined on : 111.2s for 1024 tokens
+mean pipelined off: 111.3s for 1024 tokens

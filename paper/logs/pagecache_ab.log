@@ -1,0 +1,17 @@
+=== A  F_NOCACHE, slab 5 GB (current default)
+prefill 14 tok 14.9s | decode: median 890 ms/token = 1.12 tok/s | hit rate 0.39 | 2.11 GB/token | SSD wait 667 ms/token
+=== D  F_NOCACHE, slab 5 GB, 4-way split reads
+prefill 14 tok 10.1s | decode: median 897 ms/token = 1.11 tok/s | hit rate 0.39 | 2.11 GB/token | SSD wait 647 ms/token
+=== B1 page cache, slab 3 GB (cold)
+prefill 14 tok 10.2s | decode: median 1709 ms/token = 0.59 tok/s | hit rate 0.14 | 3.05 GB/token | SSD wait 864 ms/token
+=== C1 page cache, slab 5 GB
+prefill 14 tok 10.9s | decode: median 1644 ms/token = 0.61 tok/s | hit rate 0.39 | 2.11 GB/token | SSD wait 807 ms/token
+=== B2 page cache, slab 3 GB (warm)
+prefill 14 tok 10.1s | decode: median 1050 ms/token = 0.95 tok/s | hit rate 0.14 | 3.05 GB/token | SSD wait 682 ms/token
+=== C2 page cache, slab 5 GB (warm)
+prefill 14 tok 10.5s | decode: median 5057 ms/token = 0.20 tok/s | hit rate 0.39 | 2.11 GB/token | SSD wait 1116 ms/token
+=== E  page cache, slab 3 GB, overlap off
+prefill 14 tok 13.0s | decode: median 1028 ms/token = 0.97 tok/s | hit rate 0.15 | 3.02 GB/token | SSD wait 784 ms/token
+=== F  page cache, slab 3 GB, 4-way split
+prefill 14 tok 12.7s | decode: median 1099 ms/token = 0.91 tok/s | hit rate 0.15 | 3.02 GB/token | SSD wait 685 ms/token
+=== AB FINISHED

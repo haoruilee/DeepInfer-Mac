@@ -1,0 +1,51 @@
+=== 08:50:26 trace SPEC 0
+overlap on : median 971 ms/token = 1.03 tok/s (n=32)
+overlap off: median 1149 ms/token = 0.87 tok/s (n=32)
+traced token 0: 992 ms, 136 reads
+traced token 1: 1283 ms, 185 reads
+traced token 2: 981 ms, 137 reads
+=== 08:52:00 trace SPEC 3
+overlap on : median 821 ms/token = 1.22 tok/s (n=32)
+overlap off: median 1121 ms/token = 0.89 tok/s (n=32)
+traced token 0: 932 ms, 148 reads
+traced token 1: 965 ms, 190 reads
+traced token 2: 842 ms, 140 reads
+=== 08:53:26 sweep cache 2.5 SPEC 0
+prefill 14 tok 10.7s | decode: median 1361 ms/token = 0.73 tok/s | hit rate 0.15 | 3.02 GB/token | SSD wait 926 ms/token
+=== 08:54:07 sweep cache 2.5 SPEC 3
+prefill 14 tok 10.7s | decode: median 1062 ms/token = 0.94 tok/s | hit rate 0.21 | 3.15 GB/token | SSD wait 662 ms/token
+=== 08:54:43 sweep cache 3.5 SPEC 0
+prefill 14 tok 11.1s | decode: median 980 ms/token = 1.02 tok/s | hit rate 0.37 | 2.20 GB/token | SSD wait 676 ms/token
+=== 08:55:18 sweep cache 3.5 SPEC 3
+prefill 14 tok 11.1s | decode: median 884 ms/token = 1.13 tok/s | hit rate 0.45 | 2.40 GB/token | SSD wait 490 ms/token
+=== 08:55:51 sweep cache 4.5 SPEC 0
+prefill 14 tok 11.6s | decode: median 954 ms/token = 1.05 tok/s | hit rate 0.38 | 2.16 GB/token | SSD wait 666 ms/token
+=== 08:56:26 sweep cache 4.5 SPEC 3
+prefill 14 tok 11.4s | decode: median 828 ms/token = 1.21 tok/s | hit rate 0.47 | 2.29 GB/token | SSD wait 472 ms/token
+=== 08:56:59 sweep cache 5.5 SPEC 0
+prefill 14 tok 13.5s | decode: median 932 ms/token = 1.07 tok/s | hit rate 0.44 | 1.97 GB/token | SSD wait 614 ms/token
+=== 08:57:40 sweep cache 5.5 SPEC 3
+prefill 14 tok 11.8s | decode: median 804 ms/token = 1.24 tok/s | hit rate 0.52 | 2.09 GB/token | SSD wait 427 ms/token
+=== 08:58:12 sweep cache 6.5 SPEC 0
+prefill 14 tok 13.2s | decode: median 847 ms/token = 1.18 tok/s | hit rate 0.50 | 1.76 GB/token | SSD wait 547 ms/token
+=== 08:58:57 sweep cache 6.5 SPEC 3
+prefill 14 tok 11.6s | decode: median 732 ms/token = 1.37 tok/s | hit rate 0.59 | 1.87 GB/token | SSD wait 376 ms/token
+=== 08:59:28 prefill A/B
+pipelined on : 41.9s
+pipelined off: 48.5s
+pipelined off: 52.2s
+pipelined on : 43.6s
+pipelined on : 44.8s
+pipelined off: 46.1s
+pipelined off: 45.7s
+pipelined on : 40.9s
+mean pipelined on : 42.8s for 512 tokens
+mean pipelined off: 48.1s for 512 tokens
+=== 09:09:04 io bench
+threads  1: 2.70 GB/s
+threads  2: 2.77 GB/s
+threads  4: 3.01 GB/s
+threads  8: 3.00 GB/s
+threads 16: 2.98 GB/s
+threads 32: 2.92 GB/s
+=== 09:09:20 CLEAN RUNS DONE

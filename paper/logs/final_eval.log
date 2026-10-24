@@ -1,0 +1,50 @@
+=== 22:17:35 17 API cases (upgraded build)
+case_000: prompt 15 tok, cont 32 tok | NLL ours 0.733 vs API 0.038 | top-1 agreement 78.1% | 24s
+case_001: prompt 17 tok, cont 32 tok | NLL ours 0.637 vs API 0.278 | top-1 agreement 84.4% | 24s
+case_002: prompt 18 tok, cont 1 tok | NLL ours 0.000 vs API 0.000 | top-1 agreement 100.0% | 10s
+case_003: prompt 21 tok, cont 32 tok | NLL ours 0.244 vs API 0.115 | top-1 agreement 90.6% | 22s
+case_004: prompt 15 tok, cont 32 tok | NLL ours 0.512 vs API 0.354 | top-1 agreement 90.6% | 24s
+case_005: prompt 127 tok, cont 1 tok | NLL ours 0.001 vs API 0.000 | top-1 agreement 100.0% | 26s
+    greedy answer: '074'  OK
+case_006: prompt 128 tok, cont 1 tok | NLL ours 0.000 vs API 0.000 | top-1 agreement 100.0% | 26s
+    greedy answer: '074'  OK
+case_007: prompt 129 tok, cont 1 tok | NLL ours 0.000 vs API 0.000 | top-1 agreement 100.0% | 26s
+    greedy answer: '074'  OK
+case_008: prompt 511 tok, cont 1 tok | NLL ours 0.001 vs API 0.000 | top-1 agreement 100.0% | 38s
+    greedy answer: '074'  OK
+case_009: prompt 512 tok, cont 1 tok | NLL ours 0.004 vs API 0.000 | top-1 agreement 100.0% | 37s
+    greedy answer: '074'  OK
+case_010: prompt 513 tok, cont 1 tok | NLL ours 0.001 vs API 0.000 | top-1 agreement 100.0% | 38s
+    greedy answer: '074'  OK
+case_011: prompt 1023 tok, cont 1 tok | NLL ours 0.001 vs API 0.000 | top-1 agreement 100.0% | 49s
+    greedy answer: '074'  OK
+case_012: prompt 1024 tok, cont 1 tok | NLL ours 0.002 vs API 0.000 | top-1 agreement 100.0% | 48s
+    greedy answer: '074'  OK
+case_013: prompt 1025 tok, cont 1 tok | NLL ours 0.001 vs API 0.000 | top-1 agreement 100.0% | 49s
+    greedy answer: '074'  OK
+case_014: prompt 16383 tok, cont 1 tok | NLL ours 0.006 vs API 0.000 | top-1 agreement 100.0% | 492s
+    greedy answer: '074'  OK
+case_015: prompt 16384 tok, cont 1 tok | NLL ours 0.005 vs API 0.000 | top-1 agreement 100.0% | 475s
+    greedy answer: '074'  OK
+case_016: prompt 16385 tok, cont 1 tok | NLL ours 0.002 vs API 0.000 | top-1 agreement 100.0% | 505s
+    greedy answer: '074'  OK
+mean NLL ours 0.127 vs API 0.046; mean top-1 agreement 96.7% over 17 cases
+=== 23:19:39 stepwise quality X=0
+mean NLL ours 0.424 vs API 0.157; mean top-1 agreement 91.2% over 5 cases
+=== 23:22:27 stepwise quality SKIP_MISS=0.08
+mean NLL ours 0.462 vs API 0.157; mean top-1 agreement 88.8% over 5 cases
+=== 23:25:14 stepwise quality SKIP_MISS=0.12
+mean NLL ours 0.479 vs API 0.157; mean top-1 agreement 88.8% over 5 cases
+=== 23:27:51 speed round 1 LOOKAHEAD_K=0
+prefill 14 tok 10.0s | decode: median 805 ms/token = 1.24 tok/s | hit rate 0.49 | 1.77 GB/token | SSD wait 547 ms/token
+=== 23:28:24 speed round 1 LOOKAHEAD_K=2
+prefill 14 tok 10.0s | decode: median 845 ms/token = 1.18 tok/s | hit rate 0.49 | 1.81 GB/token | SSD wait 551 ms/token
+=== 23:28:56 speed round 2 LOOKAHEAD_K=0
+prefill 14 tok 10.1s | decode: median 785 ms/token = 1.27 tok/s | hit rate 0.49 | 1.77 GB/token | SSD wait 548 ms/token
+=== 23:29:29 speed round 2 LOOKAHEAD_K=2
+prefill 14 tok 10.0s | decode: median 859 ms/token = 1.16 tok/s | hit rate 0.48 | 1.84 GB/token | SSD wait 559 ms/token
+=== 23:30:02 speed round 3 LOOKAHEAD_K=0
+prefill 14 tok 9.9s | decode: median 813 ms/token = 1.23 tok/s | hit rate 0.49 | 1.79 GB/token | SSD wait 553 ms/token
+=== 23:30:34 speed round 3 LOOKAHEAD_K=2
+prefill 14 tok 10.0s | decode: median 844 ms/token = 1.18 tok/s | hit rate 0.49 | 1.83 GB/token | SSD wait 557 ms/token
+=== 23:31:06 FINAL EVAL FINISHED

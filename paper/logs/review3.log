@@ -1,0 +1,18 @@
+=== 14:03:33 matched-predictor ablation (rerun) 5 GB
+prompt 0 round 0 done
+prompt 0 round 1 done
+prompt 0 round 2 done
+prompt 0 round 3 done
+prompt 1 round 0 done
+prompt 1 round 1 done
+prompt 1 round 2 done
+prompt 1 round 3 done
+prompt 2 round 0 done
+prompt 2 round 1 done
+prompt 2 round 2 done
+prompt 2 round 3 done
+serial          tok/s mean 1.042 ± 0.099 (n_blocks=12) | wait 610 ms/tok | demand GB/tok 1.94 | spec GB/tok 0.00 | spec hits/tok 0.0
+naive-prefetch  tok/s mean 0.921 ± 0.113 (n_blocks=12) | wait 651 ms/tok | demand GB/tok 1.30 | spec GB/tok 0.83 | spec hits/tok 49.5
+spec-wait-only  tok/s mean 1.145 ± 0.100 (n_blocks=12) | wait 463 ms/tok | demand GB/tok 1.33 | spec GB/tok 0.90 | spec hits/tok 24.8
+idle-window     tok/s mean 1.183 ± 0.086 (n_blocks=12) | wait 442 ms/tok | demand GB/tok 1.27 | spec GB/tok 0.85 | spec hits/tok 23.0
+=== 14:09:01 REVIEW3 DONE

@@ -1,0 +1,70 @@
+\documentclass{article}
+\usepackage[T1]{fontenc}
+\usepackage{iclr2027_conference,times}
+\usepackage{amsmath,amssymb,amsthm,mathtools}
+\usepackage{graphicx,booktabs,array,multirow}
+\usepackage{wrapfig,placeins,pifont}
+\usepackage{microtype,xcolor,url,hyperref}
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta,fit,backgrounds,calc}
+
+\definecolor{dsblue}{HTML}{2A78D6}
+\definecolor{dsorange}{HTML}{EB6834}
+\definecolor{dsgray}{HTML}{8A8984}
+\newcommand{\parahead}[1]{\paragraph{#1}}
+
+\hypersetup{colorlinks=true,linkcolor=black,citecolor=black,urlcolor=black,
+  pdftitle={Expert Parallelism on a Laptop: Running a 754B-Parameter MoE in 24 GB},
+  pdfauthor={Haorui Li}}
+\title{Expert Parallelism on a Laptop:\\Running a 754B-Parameter MoE in 24\,GB}
+\author{%
+\textbf{Haorui Li}\\
+Southeast University\\
+\href{mailto:haoruileee@gmail.com}{\texttt{haoruileee@gmail.com}}
+}
+\iclrfinalcopy % Non-anonymous preprint.
+\makeatletter
+\renewcommand{\@maketitle}{\vbox{\hsize\textwidth\centering
+  \def\@makefnmark{\hbox{\@textsuperscript{\normalfont\@thefnmark}}}%
+  {\LARGE\scshape\@title\par}
+  \def\And{\end{tabular}\hspace{2em}%
+    \begin{tabular}[t]{c}\rule{\z@}{24pt}\ignorespaces}%
+  \begin{tabular}[t]{c}\rule{\z@}{24pt}\@author\end{tabular}\par
+  \vskip 0.6em
+  {\normalfont\small\url{https://github.com/haoruilee/DeepInfer-Mac}\par}
+  \vskip 0.3in minus 0.1in
+}}
+\makeatother
+\newcommand{\method}{\textsc{DeepInfer-Mac}}
+\newcommand{\relu}[1]{\left[#1\right]_{+}}
+\newcommand{\norm}[1]{\left\lVert#1\right\rVert_2}
+\newcommand{\topk}{\operatorname{TopK}}
+\newcommand{\bfround}{\operatorname{bf16}}
+\newcommand{\q}{\mathbf q}
+\newcommand{\kv}{\mathbf k}
+\newcommand{\RR}{\mathbb R}
+\newtheorem{proposition}{Proposition}
+\newtheorem{lemma}{Lemma}
+\begin{document}
+\maketitle
+\lhead{} % No conference publication or review header in the preprint.
+\input{sections/abstract}
+\input{sections/introduction}
+\input{sections/background}
+\input{sections/design}
+\input{sections/implementation}
+\input{sections/indexer}
+\input{sections/experiments}
+\input{sections/related_work}
+\input{sections/conclusion}
+\label{lastmainpage}
+\clearpage
+\input{sections/ai_use_statement}
+\input{sections/reproducibility_statement}
+\clearpage
+\bibliography{references}
+\bibliographystyle{iclr2027_conference}
+\clearpage
+\appendix
+\input{sections/appendix}
+\end{document}

@@ -8,10 +8,11 @@
   2.5 to 6.5 GB (up to 1.35 tok/s, interleaved measurements); greedy outputs identical. An ablation
   shows waiting for the demand reads gives most of the gain. The old `--lookahead` was 6% slower
   because its guesses queued ahead of demand reads and evicted used experts.
-- **Indexer 2x faster in long prefill, bit-identical.** The indexer's queries and keys are fp4 values
+- **Indexer about 2x faster per prefill block (1.8–3.5x), same scores.** The indexer's queries and keys are fp4 values
   with power-of-two scales, so a bf16 matmul (fp32 accumulation, one rounding) equals the reference's
   fp32 einsum + cast; the ReLU / head-weight / head-sum chain is one Metal pass instead of three over
-  the [rows, heads, keys] tensor (16x). Checked on 436M real scores at 16-32K: zero differences.
+  the [rows, heads, keys] tensor (5-6x). Checked on 1,078M real scores at 16-32K: zero differences
+  (paper/logs/bench_kernels.log).
 - **Deterministic Top-K** (#10): higher score first, earlier position on ties, in both indexer levels;
   NaN scores are never selected.
 - **DoSA study** (#8): exact screening in the style of DoSA (arXiv 2610.13990) measured on real
@@ -76,8 +77,8 @@ Apple Silicon Mac, developed and validated on a MacBook Air M4 with 24 GB.
 **Measured on a MacBook Air M4, 24 GB**
 - Decode 1.25 tok/s; first token 10 s (short prompt) / ~49 s (1K) / ~8 min (16K).
 - Prefill expert compute as one quantized matmul per expert (1.67x over per-pair gather);
-  long-prompt prefill is now bound by the GPU's dense throughput (MXFP8 projections run within
-  ~15% of a bf16 GEMM of the same shape).
+  long-prompt prefill is now bound by the GPU's dense throughput (MXFP8 projections take
+  ~23% longer than a bf16 GEMM of the same shape).
 
 **Validation**
 - Parity against the official PyTorch reference on random configurations covering every mechanism,

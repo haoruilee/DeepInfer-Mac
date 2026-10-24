@@ -1,0 +1,19 @@
+=== 20:17:09 baseline (auto cache)
+prefill 14 tok 9.6s | decode: median 906 ms/token = 1.10 tok/s | hit rate 0.37 | 2.08 GB/token | SSD wait 636 ms/token
+mean NLL ours 0.492 vs API 0.157; mean top-1 agreement 90.6% over 5 cases
+=== 20:19:29 skip-miss 0.08
+prefill 14 tok 9.6s | decode: median 764 ms/token = 1.31 tok/s | hit rate 0.52 | 1.54 GB/token | SSD wait 476 ms/token
+mean NLL ours 0.492 vs API 0.157; mean top-1 agreement 90.6% over 5 cases
+=== 20:21:46 skip-miss 0.12
+prefill 14 tok 9.7s | decode: median 706 ms/token = 1.42 tok/s | hit rate 0.54 | 1.37 GB/token | SSD wait 423 ms/token
+mean NLL ours 0.492 vs API 0.157; mean top-1 agreement 90.6% over 5 cases
+=== 20:24:08 lookahead top-2
+prefill 14 tok 9.7s | decode: median 808 ms/token = 1.24 tok/s | hit rate 0.50 | 1.67 GB/token | SSD wait 503 ms/token
+mean NLL ours 0.492 vs API 0.157; mean top-1 agreement 90.6% over 5 cases
+=== 20:26:23 prefill-topk 4
+prefill 14 tok 9.7s | decode: median 781 ms/token = 1.28 tok/s | hit rate 0.51 | 1.61 GB/token | SSD wait 495 ms/token
+mean NLL ours 0.492 vs API 0.157; mean top-1 agreement 90.6% over 5 cases
+=== 20:29:26 DSpark
+spec=False: 1.28 tok/s, accepted 0/0 drafts
+spec=True: 0.35 tok/s, accepted 14/21 drafts
+=== 20:32:37 MATRIX FINISHED

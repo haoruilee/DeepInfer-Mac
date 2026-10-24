@@ -1,0 +1,74 @@
+\section{Weight layout}
+\label{app:format}
+Each routed expert is one record of three projections: gate $W_1$ and up $W_3$ ($2304\times5120$) and down $W_2$ ($5120\times2304$). Each projection is stored as packed integers, per-group scales and per-group biases in MLX's affine format with group size 64, and the record is padded to a multiple of 16\,KiB. Table~\ref{tab:layers} gives the bit widths per layer. We chose them with \texttt{scripts/quant\_damage.py}, which runs real layers once with the converted experts and once with the original FP4 experts and compares hidden states layer by layer. The first four layers, the layers that own KV caches or index keys, and the decoder band received 3 bits, the last layer 4 bits, and the rest 2-bit gate/up projections. The DSpark draft experts use 2-bit gate/up and 3-bit down projections.
+
+\begin{table}[h]
+\centering
+\small
+\caption{Expert bit widths ($W_1$/$W_3$/$W_2$) and record sizes.}
+\label{tab:layers}
+\begin{tabular}{@{}llr@{}}
+\toprule
+Layers & Bits & Record \\
+\midrule
+0--3, 8, 14, 20--38 & 3/3/3 & 15.5\,MB \\
+4--7, 9--13, 15--19 & 2/2/3 & 12.5\,MB \\
+39 & 4/4/4 & 19.9\,MB \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Proof of Lemma~\ref{lem:exact}}
+\label{app:exact}
+E2M1 magnitudes are $\{0, 0.5, 1, 1.5, 2, 3, 4, 6\}$, i.e., integers in $\{0,\dots,12\}$ times $2^{-1}$. In block $b$ with scales $s_{q,b}$ and $s_{k,b}$, each product $q_ik_i$ is therefore an integer of magnitude at most $144$ times $\tfrac14\sigma_b$, where $\sigma_b=s_{q,b}s_{k,b}$ is a power of two. Let $\sigma_{\min}$ and $\sigma_{\max}$ be the smallest and largest block products. Every product, and hence every partial sum over any subset of the 128 terms, is an integer multiple of $\tfrac14\sigma_{\min}$. Its magnitude is at most $128\cdot144\cdot\tfrac14\sigma_{\max}<2^{15}\cdot\tfrac14\sigma_{\max}$. Expressed in units of $\tfrac14\sigma_{\min}$, a partial sum is an integer below $2^{15}\,\sigma_{\max}/\sigma_{\min}\le2^{24}$, which FP32's 24-bit significand represents exactly. Hence every FP32 addition in any order is exact, the accumulated value equals the real dot product, and the single final rounding to BF16 equals $\bfround(\q^\top\kv)$. This assumes that the block products stay in the normal FP32 range, i.e.\ $\tfrac14\sigma_{\min}\ge2^{-126}$ and no overflow. The quantizer clamps each scale at $2^{-126}$, so the assumption can fail for blocks of near-zero activations; on our captured inputs the scale exponents lie roughly between $-8$ and $4$. \hfill$\square$
+
+\section{Top-$K$ order key}
+\label{app:order}
+For a BF16 score with bit pattern $b$ (16 bits), the key $\kappa(b) = 2^{16}-1-b$ if the sign bit is set and $b+2^{15}$ otherwise is monotone in the score value, after mapping $-0$ to $+0$. For position $j<2^{31}$ we select the $K$ largest values of $\kappa(b)\cdot2^{32} + (2^{31}-1-j)$, a 64-bit integer, with a partition. This yields the order ``higher score first, then earlier position'' regardless of the partition kernel. In the candidate-block level the query's own block has score $+\infty$, which maps to the largest key after NaNs are replaced by $-\infty$, so it is always kept.
+
+\section{Per-case API agreement}
+\label{app:api}
+\begin{table}[h]
+\centering
+\small
+\caption{Teacher-forced evaluation against continuations sampled from the official API. NLL is the mean negative log-likelihood per continuation token under each model.}
+\label{tab:api}
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+Case & Prompt & Continuation & NLL (ours) & NLL (API) & Top-1 agreement \\
+\midrule
+Prose & 15 & 32 & 0.733 & 0.038 & 78.1\% \\
+Code & 17 & 32 & 0.637 & 0.278 & 84.4\% \\
+Arithmetic & 18 & 1 & 0.000 & 0.000 & 100\% \\
+Prose & 21 & 32 & 0.244 & 0.115 & 90.6\% \\
+Italian & 15 & 32 & 0.512 & 0.354 & 90.6\% \\
+Retrieval ($\times12$) & 127--16{,}385 & 1 & $\le$0.006 & 0.000 & 100\% each \\
+\midrule
+Mean over 17 cases & & & 0.127 & 0.046 & 96.7\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Screening study details}
+\label{app:dosa}
+Table~\ref{tab:dosa} lists, for each index layer, the best configuration of the bound averaged over 17 queries (the last decode query and 16 prefill queries), with a seed set of the 4096 most recent eligible keys. $e$ is the number of negative heads evaluated exactly, $m$ the resulting number of dot products per key (positive heads, $e$ negative heads and the merged term; it varies slightly between queries), and the cost includes scoring the seed keys. \texttt{scripts/dosa\_study.py} reproduces the table and checks that no dropped key belongs to the true Top-$K$.
+
+\begin{table}[h]
+\centering
+\small
+\caption{Best screening configuration per layer (32K-token prompt; layers 2--14 see 16K compressed keys, layers 24--36 see 32K keys, of which about 16K are eligible). Survive is the fraction of the non-seed eligible keys whose bound is not below $\tau$.}
+\label{tab:dosa}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Layer & $e$ & $m$ (mean) & Survive & Cost vs.\ full scoring \\
+\midrule
+2 & 0 & 24 & 18.1\% & 85\% \\
+8 & 0 & 23 & 31.7\% & 87\% \\
+14 & 4 & 26 & 24.4\% & 91\% \\
+24 & 4 & 21 & 38.5\% & 85\% \\
+28 & 0 & 22 & 40.0\% & 88\% \\
+32 & 0 & 24 & 8.9\% & 83\% \\
+36 & 0 & 22 & 19.9\% & 81\% \\
+\bottomrule
+\end{tabular}
+\end{table}

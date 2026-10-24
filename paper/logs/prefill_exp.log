@@ -1,0 +1,4 @@
+prompt 16383 tokens; expert cache 5.4 GB
+chunk   4096:    542s (30 tok/s) | experts read 236 GB | peak MLX 18.7 GB | next token '074'
+chunk  16384:    518s (32 tok/s) | experts read 107 GB | peak MLX 25.7 GB | next token '074'
+=== PREFILL EXP FINISHED

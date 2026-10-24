@@ -1,0 +1,7 @@
+layer  2 keys  16384 queries 17 | e=0 (m~24): 18.1% survive, cost  85%  e=4 (m~28): 17.2% survive, cost  93% | best: e=0, m~24, survive 18.1%, cost 85%
+layer  8 keys  16384 queries 17 | e=0 (m~23): 31.7% survive, cost  87%  e=4 (m~27):  8.7% survive, cost  90%  e=8 (m~31):  5.5% survive, cost  99% | best: e=0, m~23, survive 31.7%, cost 87%
+layer 14 keys  16384 queries 17 | e=0 (m~22): 77.0% survive, cost  97%  e=4 (m~26): 24.4% survive, cost  91%  e=8 (m~30): 14.4% survive, cost  97% | best: e=4, m~26, survive 24.4%, cost 91%
+layer 24 keys  32768 queries 17 | e=0 (m~17): 82.2% survive, cost  96%  e=4 (m~21): 38.5% survive, cost  85%  e=8 (m~25): 31.7% survive, cost  89%  e=12 (m~29): 23.2% survive, cost  95% | best: e=4, m~21, survive 38.5%, cost 85%
+layer 28 keys  32768 queries 17 | e=0 (m~22): 40.0% survive, cost  88%  e=4 (m~26): 14.5% survive, cost  89%  e=8 (m~30): 13.9% survive, cost  97% | best: e=0, m~22, survive 40.0%, cost 88%
+layer 32 keys  32768 queries 17 | e=0 (m~24):  8.9% survive, cost  83%  e=4 (m~28):  8.8% survive, cost  92%  e=8 (m~32):  8.7% survive, cost 100% | best: e=0, m~24, survive 8.9%, cost 83%
+layer 36 keys  32768 queries 17 | e=0 (m~22): 19.9% survive, cost  81%  e=4 (m~26):  9.2% survive, cost  87%  e=8 (m~30):  8.6% survive, cost  95% | best: e=0, m~22, survive 19.9%, cost 81%

@@ -1,0 +1,3 @@
+lru                    decode hit rate: 1.0x=0.382  1.5x=0.467
+lfu                    decode hit rate: 1.0x=0.257  1.5x=0.448
+lru+freq-admission     decode hit rate: 1.0x=0.240  1.5x=0.299

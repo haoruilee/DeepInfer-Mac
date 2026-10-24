@@ -1,0 +1,32 @@
+=== 13:16:46 ablation 5 GB
+prompt 0 round 0 done
+prompt 0 round 1 done
+prompt 0 round 2 done
+prompt 0 round 3 done
+prompt 1 round 0 done
+prompt 1 round 1 done
+prompt 1 round 2 done
+prompt 1 round 3 done
+prompt 2 round 0 done
+prompt 2 round 1 done
+prompt 2 round 2 done
+prompt 2 round 3 done
+serial          tok/s mean 1.025 ± 0.074 (n_blocks=12) | wait 630 ms/tok | demand GB/tok 2.01 | spec GB/tok 0.00 | spec hits/tok 0.0
+overlap         tok/s mean 1.074 ± 0.069 (n_blocks=12) | wait 617 ms/tok | demand GB/tok 2.00 | spec GB/tok 0.00 | spec hits/tok 0.0
+naive-prefetch  tok/s mean 0.968 ± 0.123 (n_blocks=12) | wait 667 ms/tok | demand GB/tok 1.33 | spec GB/tok 0.86 | spec hits/tok 50.2
+spec-neither    tok/s mean 0.988 ± 0.093 (n_blocks=12) | wait 637 ms/tok | demand GB/tok 1.29 | spec GB/tok 0.84 | spec hits/tok 50.2
+spec-wait-only  tok/s mean 1.174 ± 0.081 (n_blocks=12) | wait 464 ms/tok | demand GB/tok 1.32 | spec GB/tok 0.89 | spec hits/tok 22.9
+spec-cold-only  tok/s mean 0.866 ± 0.094 (n_blocks=12) | wait 770 ms/tok | demand GB/tok 1.70 | spec GB/tok 0.84 | spec hits/tok 20.3
+idle-window     tok/s mean 1.198 ± 0.080 (n_blocks=12) | wait 456 ms/tok | demand GB/tok 1.30 | spec GB/tok 0.87 | spec hits/tok 21.3
+=== 13:26:02 sweep
+overlap         tok/s mean 0.721 ± 0.017 (n_blocks=9) | wait 915 ms/tok | demand GB/tok 2.99 | spec GB/tok 0.00 | spec hits/tok 0.0
+idle-window     tok/s mean 0.914 ± 0.032 (n_blocks=9) | wait 652 ms/tok | demand GB/tok 1.71 | spec GB/tok 1.43 | spec hits/tok 17.4
+overlap         tok/s mean 1.013 ± 0.067 (n_blocks=9) | wait 651 ms/tok | demand GB/tok 2.12 | spec GB/tok 0.00 | spec hits/tok 0.0
+idle-window     tok/s mean 1.124 ± 0.073 (n_blocks=9) | wait 496 ms/tok | demand GB/tok 1.41 | spec GB/tok 0.95 | spec hits/tok 22.5
+overlap         tok/s mean 1.022 ± 0.074 (n_blocks=9) | wait 644 ms/tok | demand GB/tok 2.09 | spec GB/tok 0.00 | spec hits/tok 0.0
+idle-window     tok/s mean 1.162 ± 0.088 (n_blocks=9) | wait 472 ms/tok | demand GB/tok 1.33 | spec GB/tok 0.94 | spec hits/tok 21.4
+overlap         tok/s mean 1.083 ± 0.085 (n_blocks=9) | wait 597 ms/tok | demand GB/tok 1.94 | spec GB/tok 0.00 | spec hits/tok 0.0
+idle-window     tok/s mean 1.226 ± 0.121 (n_blocks=9) | wait 424 ms/tok | demand GB/tok 1.22 | spec GB/tok 0.84 | spec hits/tok 21.3
+overlap         tok/s mean 1.155 ± 0.038 (n_blocks=9) | wait 542 ms/tok | demand GB/tok 1.75 | spec GB/tok 0.00 | spec hits/tok 0.0
+idle-window     tok/s mean 1.347 ± 0.144 (n_blocks=9) | wait 372 ms/tok | demand GB/tok 1.08 | spec GB/tok 0.71 | spec hits/tok 21.5
+=== 13:39:16 REVIEW RUNS DONE

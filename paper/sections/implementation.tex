@@ -1,0 +1,33 @@
+\section{Implementation}
+\label{sec:impl}
+\method{} is about 3,800 lines of Python on MLX \citep{mlx}, plus one Metal kernel (Section~\ref{sec:indexer}). We ported the official reference implementation op by op, and our tests run that implementation as an oracle. The engine is not lossless overall: experts are compressed to 2--4 bits (below). We wanted every speed-up to be checkable against the reference.
+
+\paragraph{Weight format.} Table~\ref{tab:format} shows where each part of the model is stored. The FP8 dense weights convert to MLX's \texttt{mxfp8} format without any loss: we keep the E4M3 values and copy each $32\times32$ E8M0 block scale to the per-32-element scales of MXFP8. Routed experts are converted from FP4 to 2--4-bit affine integers with group size 64. For each group we search for the clipping ratio that gives the smallest mean squared error. We chose bit widths per layer by comparing hidden states with converted and original experts (Appendix~\ref{app:format}). Lossless MXFP4 experts would need about 296\,GB instead of 208\,GB, which did not fit on our 1\,TB disk next to the download. Engram tables are stored as 4-bit rows with group size 32 (160 bytes per row); the converted rows differ from the originals by 0.64\% relative error.
+
+\begin{table}[t]
+\centering
+\small
+\caption{Converted weights of DeepSeek-V4.1-Flash, as stored on disk (sizes in GiB; we write GB for GiB throughout).}
+\label{tab:format}
+\begin{tabular}{@{}p{0.43\linewidth}lrl@{}}
+\toprule
+Component & Format & Size & Location \\
+\midrule
+Dense layers: attention, shared experts, routers, mHC, Engram projections & \texttt{mxfp8}, lossless & 6.9 & memory \\
+Output head and other global tensors & affine 8-bit / BF16 & 0.7 & memory \\
+Embedding & BF16, memory-mapped & 1.2 & SSD \\
+Routed experts, $40\times384$ & affine 2/3/4-bit, $g=64$ & 208.3 & SSD \\
+DSpark layers: dense parts / experts ($3\times128$) & \texttt{mxfp8} / affine 2/3-bit & 0.7 / 4.5 & SSD \\
+Vision encoder & BF16 & 0.9 & SSD \\
+Engram tables, $2\times384$M rows & affine 4-bit, $g=32$ & 114.4 & SSD \\
+\midrule
+Total on disk & & 337.6 & \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{One forward path.} As in DeepInfer, prefill, decode, chunked prefill, prefix reuse and speculative verification all use the same forward function. It can process any chunk of tokens at any position. The per-sequence state has the sliding-window rings, the compressed KV and indexer-key caches and the compressor's unfinished tail. It can be saved and restored exactly. Two features use this. With \emph{bounded replay}, layers 21--39 only process the last 140 prompt tokens, because they see older tokens only through layer 20's compressed cache and their own 128-token window. This is DeepInfer's default and roughly halves expert reads in long prefill. For \emph{conversation reuse}, the engine keeps the last sequence and a snapshot taken one token before the end of the last prompt. A follow-up turn that extends either of them only processes the new tokens. The snapshot is needed in thinking mode, where the chat template removes the previous turn's reasoning from the next prompt.
+
+\paragraph{Other components.} Engram rows are read from the SSD tables through a row-level LRU cache; image tokens are left out of the $n$-gram hash, as in the reference. DSpark drafts are checked with speculative rejection sampling, which keeps the output distribution exact at any temperature. A small controller measures the throughput of speculative and plain steps and stops speculating when it is slower. The server supports the OpenAI, Anthropic and Responses APIs and reuses DeepSeek's prompt rendering and output parsing \citep{deepseekrecipe}. Structured outputs use XGrammar \citep{xgrammar}. The converter never stores the 510\,GB release. It reads each tensor from the model hub with range requests, converts it on the GPU and writes it to its final place, and it can resume after any interruption.
+
+\paragraph{Testing.} The test suite runs DeepSeek's PyTorch model, with CPU versions of its TileLang kernels, on small random configurations that cover every mechanism. With activation rounding turned off on both sides, prefill and 19 decode steps reach a median logit cosine of at least 0.9999. The vision encoder matches the reference exactly in FP32. DSpark drafts equal the reference, and greedy speculative decoding gives the same tokens as greedy decoding. On the real checkpoint, every converted layer reaches a cosine of at least 0.99997 against the reference on a real chat prompt, and the Engram hash ids are identical.

@@ -1,0 +1,91 @@
+\section{Evaluation}
+\label{sec:eval}
+\paragraph{Setup.} All experiments run on a MacBook Air with an M4 chip (10-core GPU), 24\,GB of memory and a 1\,TB internal SSD, under macOS 26.6 and MLX 0.32, with other applications closed. For the main decode experiments (the ablation in Table~\ref{tab:ablation} and the sweep in Figure~\ref{fig:sweep}), all compared configurations run interleaved in one process. Each \emph{block} decodes 6 tokens with one configuration; the order of configurations rotates every round; we use three prompts (English prose, technical English and Chinese) and 3--4 rounds per prompt, and report the mean over blocks of the median time per token, with 95\% confidence intervals from Student's $t$ distribution. Speed-ups are paired: each block is compared with the block of the reference configuration from the same round. Other numbers come from earlier sessions and are marked as such. We answer three questions: how fast the system is and how well Equation~\eqref{eq:chain} describes it (\S\ref{sec:e2e}), which kinds of parallelism help (\S\ref{sec:parallel-eval}), and how close the output is to DeepSeek's own deployment (\S\ref{sec:quality}).
+
+\subsection{Decode speed and the cost model}
+\label{sec:e2e}
+Figure~\ref{fig:sweep} shows decode speed for expert caches from 2.5 to 6.5\,GB. Without speculation, speed rises from 0.72 to 1.16 tokens/s as the hit rate grows from 0.16 to 0.50. With idle-window speculation it rises from 0.91 to 1.35 tokens/s. The paired speed-up is 11--27\% at every cache size (for example $1.112\pm0.056$ at 3.5\,GB and $1.166\pm0.096$ at 6.5\,GB), and speculation was faster in 43 of 45 blocks. The time spent waiting for the SSD drops by 24--31\%. A cache of about 6\,GB is the largest that leaves 9\,GB for macOS on this machine.
+
+We fitted Equation~\eqref{eq:chain} in the form $t = C + D/B$, where $D$ is the number of demand bytes per token, to the five runs without speculation ($C=117$\,ms, $B=2.37$\,GB/s; maximum error 2.0\%). With five points this is a fit, not a prediction, and $C$ and $B$ should not be read as a compute time and a bandwidth on their own. As a held-out test we applied the same fit to the speculation runs. Counting only their demand bytes, it overestimates their speed: the predicted time per token is 23\% too short on average, so the speculative reads are not free. Adding a term $\alpha S/B$ for the speculative bytes $S$ and fitting $\alpha$ on the same runs gives $\alpha=0.47$, with residuals from $+2.9\%$ to $-6.3\%$ that fall steadily with cache size; this is a description, not a held-out result. The traces (three tokens per setting, Figure~\ref{fig:timeline}) show the same effect directly. Without speculation the SSD is busy 62--65\% of a decode step. With speculation it is busy 73--89\%, and speculative reads that do not overlap any demand read take 28--34\% of the step, i.e.\ they mostly use time in which the SSD was idle before.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.9\linewidth]{figures/sweep.pdf}
+\caption{(a) Decode speed against expert cache size, with and without idle-window speculation (interleaved, 95\% Student-$t$ confidence intervals over 9 blocks), with the cost model fitted on the runs without speculation and the same model with the speculative bytes weighted by $\alpha=0.47$. (b) Time per token spent waiting for the SSD.}
+\label{fig:sweep}
+\end{figure}
+
+\paragraph{Prefill.} The first token arrives after about 10\,s for a 14-token prompt, about 49\,s for 1K tokens and about 9 minutes for 16K tokens (542\,s in 4K-token chunks, 30 tokens/s). Even a short prompt routes to most experts of every layer, so the first chunk reads nearly the whole expert set once. Long prompts are limited by GPU compute instead: the MXFP8 projections take about 23\% longer than a BF16 GEMM of the same shape, and bounded replay removes the decoder layers for all but the last 140 tokens. One 16K-token chunk is about as fast as four 4K chunks (518\,s vs.\ 542\,s) but needs 25.7\,GB instead of 18.7\,GB of MLX memory at peak, so we prefill in 4K chunks. Even a 4K chunk temporarily leaves less than the 9\,GB reserve of Section~\ref{sec:replication}, which is meant for decode, so long prompts run with other applications closed.
+
+\subsection{Where does parallelism help?}
+\label{sec:parallel-eval}
+Table~\ref{tab:ablation} and Figure~\ref{fig:parallel} show the interleaved ablation at a 5\,GB cache; Table~\ref{tab:negative} lists techniques measured in earlier sessions.
+
+\begin{table}[t]
+\centering
+\small
+\caption{Decode schedule ablation at a 5\,GB cache, all configurations interleaved (3 prompts $\times$ 4 rounds, 12 blocks of 6 tokens each). Speed-ups are paired against the serial schedule of the same round (mean and 95\% confidence interval). Numbers are from the first ablation run; the matched-predictor rerun is reported in the text. All speculative variants use $k=3$ guesses per layer; $^\dagger$ranks the guesses by the raw gate logits plus bias, the others by the router's exact scoring (see text).}
+\label{tab:ablation}
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{@{}lccrrr@{}}
+\toprule
+Schedule & Guesses wait & Guesses cold & Tokens/s & Speed-up & SSD wait (ms/tok) \\
+\midrule
+Serial (no overlap) & -- & -- & 1.03 & 1.00 & 630 \\
+Overlap of cached and missing experts & -- & -- & 1.07 & $1.05\pm0.04$ & 617 \\
+Naive next-layer prefetch \citep{moeoffload}$^\dagger$ & no & no & 0.97 & $0.95\pm0.07$ & 667 \\
+Guesses after demand submission & no & no & 0.99 & $0.96\pm0.05$ & 637 \\
+Guesses, cold insertion only & no & yes & 0.87 & $0.85\pm0.06$ & 770 \\
+Guesses, wait for demand reads only & yes & no & 1.17 & $1.15\pm0.05$ & 464 \\
+\textbf{Idle-window speculation} & yes & yes & \textbf{1.20} & $\mathbf{1.17\pm0.05}$ & \textbf{456} \\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{figures/parallel.pdf}
+\caption{Parallelism on one laptop. (a) Read bandwidth for expert records against the number of reads in flight (\texttt{F\_NOCACHE}, records not cached). (b) The schedule ablation of Table~\ref{tab:ablation} (speed-up over the serial schedule, 95\% confidence intervals); green: faster than serial. (c) Prefill of a 512-token prompt with and without reading the next expert batch while the current batch computes (bars: mean; dots: four runs each).}
+\label{fig:parallel}
+\end{figure}
+
+\paragraph{Inside the SSD.} With one read in flight, expert records arrive at 2.70\,GB/s; with four or more, at about 3.0\,GB/s, after which the drive is saturated (Figure~\ref{fig:parallel}a). Splitting each expert into four smaller reads made no difference in an earlier session (1.11 vs.\ 1.12 tokens/s), because a 12--20\,MB request is already large. The eight I/O threads collect this gain at no cost.
+
+\paragraph{Inside a layer.} Computing the cached experts while the missing ones load is the closest match to EP's micro-batch overlap. It made decode $5\pm4\%$ faster (8 of 12 blocks). Figure~\ref{fig:timeline}a shows why the gain is small: the cached experts of a layer compute in 2--4\,ms, while its reads take 10--30\,ms.
+
+\paragraph{Across layers.} Next-layer prefetching in the style of \citet{moeoffload} made decode 5\% slower than serial and 10\% slower than overlap alone. The ablation separates our two changes. Waiting for the demand reads before issuing guesses accounts for almost all of the gain ($1.15\times$). Cold insertion adds about 2 points on top, which is within the confidence interval at this cache size. On its own, cold insertion made decode 15\% \emph{slower}: guesses issued together with the demand reads compete for the SSD, and cold entries are evicted again before the next layer can use them. With both changes, decode is $1.17\pm0.05$ times faster than serial and faster in 11 of 12 blocks. In this run the naive prefetcher ranks its guesses by the raw gate logits plus bias, while our guesses use the router's exact scoring. To rule out the predictor as the cause, we repeated the ablation with both using the exact scoring (a second interleaved run, 12 blocks). Naive prefetching was still slower than serial ($0.89\pm0.05$, 0 of 12 blocks faster), although it obtained twice as many speculative hits per token (50 vs.\ 23); waiting for the demand reads gave $1.10\pm0.05$ and idle-window speculation $1.14\pm0.05$ (12 of 12 blocks faster). Guesses that compete with demand reads cost more than their hits save. In a separate, non-interleaved run on the same day (5\,GB cache), three guesses per layer worked best (1.19 tokens/s, against 1.13 for two, 1.14 for four and 1.06 for six); with more guesses, they start to delay demand reads.
+
+\paragraph{Across expert batches in prefill.} During prefill a chunk of tokens goes through each layer, and the engine processes the layer's experts in batches of 16. Reading the next batch while the current one computes made a 512-token prefill 11\% faster (42.8\,s vs.\ 48.1\,s, means of four runs; every pipelined run was faster than every serial run). In an earlier session with other programs using memory, the same comparison on a 1K-token prompt showed no difference (111\,s vs.\ 111\,s) and some pipelined runs swapped, because the extra batch needs memory.
+
+\paragraph{Across tokens.} Speculative decoding checks several drafted tokens in one pass \citep{specdecoding}. Here the drafted tokens route to different experts, so the check must read the union of their experts. With DSpark drafts of fixed length, decode dropped from 1.28 to 0.35 tokens/s in an earlier session. The controller from Section~\ref{sec:impl} detects this and falls back to plain decoding.
+
+\paragraph{In the operating system.} The page cache could act as a larger second-level cache behind the slab, but it competes with the slab for the same memory. With a 5\,GB slab, enabling page caching lowered decode from 1.12 to 0.61 tokens/s (0.20 in a later warm run).
+
+\begin{table}[t]
+\centering
+\small
+\caption{Techniques measured in earlier sessions (tokens/s, against a baseline from the same session).}
+\label{tab:negative}
+\begin{tabular}{@{}p{0.37\linewidth}rrp{0.33\linewidth}@{}}
+\toprule
+Technique & Baseline & With & Reason \\
+\midrule
+4-way split reads per expert & 1.12 & 1.11 & one large read already saturates the SSD \\
+DSpark, fixed draft length & 1.28 & 0.35 & verification reads the union of the drafts' experts \\
+OS page cache behind a 5\,GB slab & 1.12 & 0.20--0.61 & competes with the slab for memory \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+In summary, parallelism helps when it gives the SSD work during the time the dependency chain would leave it idle, without delaying the reads a token is waiting for or taking memory from the cache. Idle-window speculation meets these conditions; naive prefetching, speculative decoding and the page cache each violate one of them. The cache size still matters most: going from 2.5 to 6.5\,GB raised decode speed by 47--60\%.
+
+\subsection{Output quality}
+\label{sec:quality}
+\paragraph{Against the official API.} We use continuations sampled from DeepSeek's API for V4.1-Flash, published by \citet{ds4}, and run them through the converted model with teacher forcing. Figure~\ref{fig:api} shows top-1 agreement for 17 cases. Five are open-ended continuations (prose, code, arithmetic and Italian). Twelve are needle-retrieval prompts whose lengths sit just below, at and above the sliding window (128), the compressed-key and Top-$K$ boundaries (512 and 1024) and the candidate-block level (16K). The mean agreement per case is 96.7\% and the mean NLL is 0.127, against 0.046 for the API's own model. The retrieval answer is correct at all twelve lengths, up to 16,385 tokens. Over the 129 tokens of the five open-ended continuations, agreement is 86.0\%. We attribute the gap to the 2--3-bit experts, which matter more for open-ended text than for retrieval.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.9\linewidth]{figures/api_cases.pdf}
+\caption{Top-1 agreement with continuations sampled from the official API. The retrieval prompts have one-token answers.}
+\label{fig:api}
+\end{figure}

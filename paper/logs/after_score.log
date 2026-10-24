@@ -1,0 +1,31 @@
+case_000: prompt 15 tok, cont 32 tok | NLL ours 0.817 vs API 0.038 | top-1 agreement 84.4% | 32s
+case_001: prompt 17 tok, cont 32 tok | NLL ours 0.621 vs API 0.278 | top-1 agreement 84.4% | 35s
+case_002: prompt 18 tok, cont 1 tok | NLL ours 0.000 vs API 0.000 | top-1 agreement 100.0% | 17s
+case_003: prompt 21 tok, cont 32 tok | NLL ours 0.259 vs API 0.115 | top-1 agreement 90.6% | 31s
+case_004: prompt 15 tok, cont 32 tok | NLL ours 0.514 vs API 0.354 | top-1 agreement 90.6% | 33s
+case_005: prompt 127 tok, cont 1 tok | NLL ours 0.000 vs API 0.000 | top-1 agreement 100.0% | 34s
+    greedy answer: '074'  OK
+case_006: prompt 128 tok, cont 1 tok | NLL ours 0.000 vs API 0.000 | top-1 agreement 100.0% | 35s
+    greedy answer: '074'  OK
+case_007: prompt 129 tok, cont 1 tok | NLL ours 0.000 vs API 0.000 | top-1 agreement 100.0% | 34s
+    greedy answer: '074'  OK
+case_008: prompt 511 tok, cont 1 tok | NLL ours 0.002 vs API 0.000 | top-1 agreement 100.0% | 49s
+    greedy answer: '074'  OK
+case_009: prompt 512 tok, cont 1 tok | NLL ours 0.004 vs API 0.000 | top-1 agreement 100.0% | 65s
+    greedy answer: '074'  OK
+case_010: prompt 513 tok, cont 1 tok | NLL ours 0.002 vs API 0.000 | top-1 agreement 100.0% | 53s
+    greedy answer: '074'  OK
+case_011: prompt 1023 tok, cont 1 tok | NLL ours 0.004 vs API 0.000 | top-1 agreement 100.0% | 74s
+    greedy answer: '074'  OK
+case_012: prompt 1024 tok, cont 1 tok | NLL ours 0.002 vs API 0.000 | top-1 agreement 100.0% | 94s
+    greedy answer: '074'  OK
+case_013: prompt 1025 tok, cont 1 tok | NLL ours 0.003 vs API 0.000 | top-1 agreement 100.0% | 75s
+    greedy answer: '074'  OK
+case_014: prompt 16383 tok, cont 1 tok | NLL ours 0.004 vs API 0.000 | top-1 agreement 100.0% | 519s
+    greedy answer: '074'  OK
+case_015: prompt 16384 tok, cont 1 tok | NLL ours 0.002 vs API 0.000 | top-1 agreement 100.0% | 539s
+    greedy answer: '074'  OK
+case_016: prompt 16385 tok, cont 1 tok | NLL ours 0.003 vs API 0.000 | top-1 agreement 100.0% | 647s
+    greedy answer: '074'  OK
+
+mean NLL ours 0.132 vs API 0.046; mean top-1 agreement 97.1% over 17 cases

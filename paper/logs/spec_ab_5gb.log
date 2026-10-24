@@ -1,0 +1,8 @@
+5 passed in 12.28s
+SPEC_K=0: median 943 ms/token = 1.061 tok/s | SSD wait 627 ms/token | misses 140.0, hits 100.0, speculative hits 0.0 per token
+SPEC_K=2: median 886 ms/token = 1.129 tok/s | SSD wait 510 ms/token | misses 125.9, hits 90.9, speculative hits 23.2 per token
+SPEC_K=3: median 841 ms/token = 1.189 tok/s | SSD wait 453 ms/token | misses 122.4, hits 95.1, speculative hits 22.5 per token
+SPEC_K=4: median 874 ms/token = 1.144 tok/s | SSD wait 477 ms/token | misses 137.6, hits 86.2, speculative hits 16.2 per token
+SPEC_K=6: median 941 ms/token = 1.063 tok/s | SSD wait 520 ms/token | misses 133.5, hits 97.6, speculative hits 8.9 per token
+
+[exited with code 0]

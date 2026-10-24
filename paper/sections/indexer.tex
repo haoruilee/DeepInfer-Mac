@@ -1,0 +1,44 @@
+\section{Case study: the sparse-attention indexer}
+\label{sec:indexer}
+Long prompts on a laptop take minutes, and part of that time goes to the indexer. For a query with indexer heads $\q_1,\dots,\q_H\in\RR^{d}$ ($H=32$, $d=128$) and signed head weights $w_1,\dots,w_H$, the reference scores each visible compressed key $\kv_j$ as
+\begin{equation}
+s_j \;=\; \bfround\!\Big(\sum_{h=1}^{H} \bfround\big(\relu{\bfround(\q_h^\top\kv_j)}\, w_h\big)\Big),
+\label{eq:score}
+\end{equation}
+summing in FP32, and keeps the $K=512$ best keys. In layers 21--39, only keys inside the candidate blocks from layer 20 are eligible. Prefill scores every query against every visible key, so this cost grows with the square of the prompt length. We looked at two ways to make it cheaper: computing Equation~\eqref{eq:score} faster but exactly, and skipping keys that cannot win.
+
+\subsection{Faster scoring with the same results}
+\paragraph{BF16 products.} The reference computes $\q_h^\top\kv_j$ in FP32 and then rounds to BF16. Both inputs are FP4 values with power-of-two scales, which BF16 can represent exactly.
+\begin{lemma}
+\label{lem:exact}
+Let $\q,\kv\in\RR^{128}$ hold E2M1 values with one power-of-two scale per block of 32 elements, and let $\sigma_b$ be the product of the two scales of block $b$. If $\max_b\sigma_b/\min_b\sigma_b\le 2^{9}$, then every partial sum of $\q^\top\kv$, in any order, is exactly representable in FP32. A BF16 matrix multiplication with FP32 accumulation and one final rounding therefore returns $\bfround(\q^\top\kv)$, which is the reference result.
+\end{lemma}
+Appendix~\ref{app:exact} gives the proof. It assumes, besides the scale condition, that no block product leaves the normal FP32 range, and that the BF16 matrix multiplication accumulates in FP32; MLX's GEMM and GEMV kernels for BF16 inputs use FP32 accumulators, but we verified exactness empirically rather than for every kernel variant. If the condition does not hold, both versions are FP32 sums whose rounding can depend on the summation order, which is also true for different GPU kernels running the reference. On indexer inputs captured from a real 32K-token prompt, the BF16 version gave the same value for all 1{,}078M scores and ran the matmul $1.5$--$1.9\times$ faster on the M4 GPU.
+
+\paragraph{Fused head reduction.} After the matmul, Equation~\eqref{eq:score} still needs a ReLU, a multiplication by $w_h$ and a BF16 rounding per element, followed by a sum over heads. Written with array operations, this reads a $[\text{rows},H,T]$ tensor three times; for 128 query rows and $T=32$K keys that tensor has 134M elements. We replaced these operations with one Metal kernel. Each thread handles one (row, key) pair and loops over the heads, applying the same roundings in the same order. On all inputs we tested it gives the same results as the array form, and it is $5$--$6\times$ faster for this step. Both sum the 32 heads in FP32, so their results could differ in the last bit if the summation orders differed and the terms spanned a very wide range; the reference's own reduction order is implementation-defined in the same way. Figure~\ref{fig:indexer}a shows the effect on real query blocks: the whole indexer block runs $1.8$--$2.1\times$ faster on three layers and $3.5\times$ on one, and the selected keys are unchanged.
+
+\paragraph{Fixed tie order.} A partition-based Top-$K$ leaves ties at the $K$-th place to the kernel. We sort by a 64-bit key built from the BF16 score and the position (Appendix~\ref{app:order}), so ties go to the earlier position; NaN scores are treated as $-\infty$. This makes the selection a pure function of the scores, which also matters for the exact screening below.
+
+\subsection{Skipping keys: exact screening}
+\label{sec:dosa}
+DoSA \citep{dosa} skips keys while keeping the selection exact. A seed set of keys gives a lower bound $\tau$ on the $K$-th best score. A cheap upper bound $U_j$ is then computed for every key, and keys with $U_j<\tau$ are dropped before full scoring. The DoSA paper reports indexer speed-ups of up to $2.74\times$ on GLM-5.2 and DeepSeek-V3.2, above $2\times$ at 512K tokens and more, with $K=2048$. V4.1-Flash differs in three ways: it has fewer indexer heads, a smaller $K$, and a two-level candidate selection. We therefore measured how well the bound works on this model.
+
+\paragraph{Setup.} We saved the indexer inputs of a real 32K-token prompt at the eight index layers and study the seven that select keys by Equation~\eqref{eq:score} alone; layer 20, the candidate source, also needs every block maximum and cannot skip keys. We use 17 queries per layer: the last decode query and 16 queries spread over the last prefill block. For each query, the \emph{eligible} keys are those it can see and, in layers 21--39, those inside its candidate blocks. $\tau$ is the $K$-th best exact score among the 4096 most recent eligible keys (the seed set). As in DoSA, the bound evaluates the positive heads $P$ and the $e$ strongest negative heads $E$ exactly and merges the other negative heads into one term:
+\begin{equation}
+U_j = \sum_{h\in P} w_h\relu{\q_h^\top\kv_j} - \sum_{h\in E} |w_h|\relu{\q_h^\top\kv_j} - \relu{\textstyle\sum_{h\in N\setminus E}|w_h|\,\q_h^\top\kv_j}.
+\end{equation}
+This is valid because $\sum_i \relu{x_i}\ge\relu{\sum_i x_i}$. We enlarge $U_j$ by $2^{-7}$ of the size of its terms to cover the BF16 roundings in Equation~\eqref{eq:score}, and we check that no dropped key belongs to the true Top-$K$. The bound needs $m=|P|+|E|+1$ dot products per key. A surviving key reuses the $|P|+|E|$ exact heads and only needs the remaining ones. Relative to fully scoring the eligible keys, the cost is the seed keys (scored fully), plus the other keys times $m/H$ for the bound, plus the surviving keys times $|N\setminus E|/H$ for rescoring.
+
+\paragraph{Results.} Figure~\ref{fig:indexer}b and Table~\ref{tab:dosa} show the cost at the best head budget for each layer, averaged over the 17 queries. A useful bound needs about 21--26 of the 32 heads, and the best total cost is 81--91\% of full scoring. We also tried DoSA's joint bound for omitted positive heads, $\tfrac12\big(\norm{\sum_h \mathbf a_h}+\sqrt{\sum_{i,j}|\mathbf a_i^\top\mathbf a_j|}\big)\norm{\kv}$, over all 128 dimensions and per 32-dimension group. With 8, 12 or 16 of the 21--23 positive heads kept, it did not drop any key that the candidate mask had not already removed. A low-rank bound from the leading singular vectors of the query heads also failed, because their singular values decay slowly. Two properties of V4.1 explain the gap to the DoSA setting:
+\begin{itemize}
+  \item At 16--32K keys, $K=512$ is a large fraction of the keys, so $\tau$ sits low in the score distribution.
+  \item In layers 21--39 only the 16K positions in a query's candidate blocks are eligible, so the model's own two-level selection already removes many keys before the indexer score matters. (Our implementation still scores all keys and masks; computing only eligible keys would not help prefill either, because the candidate sets of 16 consecutive queries together cover 98\% of the keys.)
+\end{itemize}
+In the best case screening would save 9--19\% of indexer scoring, before the cost of compacting survivors on the GPU. We estimate the indexer at about 8\% of a 32K-token prefill (from per-block timings), so the end-to-end gain would be about 1\%. We left screening off and shared the measurements with the DoSA authors. Longer contexts may change the result, but a 128K-token prefill takes hours on this machine.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{figures/indexer.pdf}
+\caption{(a) Indexer time per prefill query block on real inputs (rows $\times$ keys), before and after the BF16 matmul and the fused head reduction. Scores and selected keys are identical on these blocks. (b) Cost of the screening bound (checked offline in float64 with slack for the BF16 roundings) relative to fully scoring the eligible keys, per index layer, at the best head budget ($K=512$, 32K-token prompt, mean over 17 queries; includes scoring the seed keys).}
+\label{fig:indexer}
+\end{figure}

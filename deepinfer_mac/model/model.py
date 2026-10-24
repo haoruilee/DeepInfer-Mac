@@ -701,7 +701,7 @@ class MoE:
             # compute
             # LOOKAHEAD_K: prefetch only the k most confident predictions (mispredictions cost reads)
             k = min(self.LOOKAHEAD_K or nxt.topk, nxt.topk)
-            sc = x[-1:].astype(mx.float32) @ nxt.gate_w.T + nxt.bias
+            sc = mx.sqrt(mx.logaddexp(x[-1:].astype(mx.float32) @ nxt.gate_w.T, 0.0)) + nxt.bias  # the router's scoring
             pred = mx.argpartition(-sc, kth=k - 1, axis=-1)[:, :k]
             idx_np, pred_np = (np.array(a) for a in (idx, pred))
             self.experts.prefetch(nxt.key, pred_np[0].tolist(), optional=True)

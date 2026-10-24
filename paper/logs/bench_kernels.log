@@ -1,0 +1,6 @@
+1. BF16 vs FP32 scoring: 0 differences in 1077891200 scores (1078M)
+1024 rows=128 keys=32767: 2. matmul FP32 55.9 ms vs BF16 36.2 ms (1.5x) | head sum 3 passes 56.6 ms vs fused 9.3 ms (6x, identical=True) | 3. block 125.3 -> 35.8 ms (3.5x), scores identical=True, keys identical=True
+1036 rows=128 keys=32767: 2. matmul FP32 60.2 ms vs BF16 31.7 ms (1.9x) | head sum 3 passes 51.7 ms vs fused 10.9 ms (5x, identical=True) | 3. block 128.1 -> 66.6 ms (1.9x), scores identical=True, keys identical=True
+1002 rows=255 keys=16383: 2. matmul FP32 56.5 ms vs BF16 35.0 ms (1.6x) | head sum 3 passes 54.2 ms vs fused 9.7 ms (6x, identical=True) | 3. block 128.0 -> 70.5 ms (1.8x), scores identical=True, keys identical=True
+1014 rows=255 keys=16383: 2. matmul FP32 57.8 ms vs BF16 33.9 ms (1.7x) | head sum 3 passes 49.9 ms vs fused 10.4 ms (5x, identical=True) | 3. block 126.6 -> 60.9 ms (2.1x), scores identical=True, keys identical=True
+4. 4096x5120x5120: BF16 GEMM 167.3 ms, MXFP8 quantized matmul 206.3 ms (1.23x the BF16 time)
