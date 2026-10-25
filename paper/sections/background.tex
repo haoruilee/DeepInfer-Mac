@@ -1,19 +1,36 @@
 \section{Background and motivation}
 \label{sec:background}
 \subsection{DeepSeek-V4.1-Flash}
-DeepSeek-V4.1-Flash has 754B parameters in 40 transformer layers with hidden size 5120 \citep{deepseek41flash}. Each layer has an MoE block with one shared expert and 384 routed experts (intermediate size 2304); a sqrt-softplus router picks 6 of them for every token. Attention uses a 128-token sliding window plus \emph{compressed sparse attention}. Layers 2--19 compress the keys at ratio 2 and layers 20--39 at ratio 1. A small multihead indexer \citep{deepseek32} with 32 heads of dimension 128 then selects 512 compressed positions for each query. Selection has two levels: layer 20 picks 2048 candidate blocks of 8 positions, and later index layers only score inside those blocks. Layers 0 and 1 use the window only. Four layers (2, 8, 14 and 20) own the compressed KV caches and indexer keys, and the other layers reuse them. Layers 1 and 14 also contain an \emph{Engram} module, which looks up embeddings of hashed $n$-grams ($n\le4$) in two tables with about 384M rows each. The residual stream uses Hyper-Connections with four streams and Sinkhorn-normalized mixing matrices \citep{hyperconnections}. The model also has three DSpark draft layers for speculative decoding and a 32-layer vision encoder.
+Table~\ref{tab:model} summarizes the model. Every layer contains a mixture-of-experts block in which a router picks a few routed experts for each token, next to one shared expert. Attention combines a short sliding window with \emph{compressed sparse attention}. Keys are compressed along the sequence, and a small multi-head indexer \citep{deepseek32} chooses which compressed positions each query attends to. The selection works on two levels: one layer picks candidate blocks of positions, and the indexers of later layers only score keys inside those blocks. A few layers own the compressed caches and the others reuse them. Two layers add an \emph{Engram} module that looks up embeddings of hashed $n$-grams in very large tables, and the residual stream is mixed by Hyper-Connections with Sinkhorn-normalized matrices \citep{hyperconnections}. The release also includes draft layers for speculative decoding, called DSpark, and a vision encoder.
 
-The release stores dense weights in FP8 (E4M3 with $32\times32$ E8M0 block scales) and experts in FP4 (E2M1 with one E8M0 scale per 32 values), 510\,GB in total. The reference inference code also rounds activations at fixed points during inference: FP8 before dense projections, FP4 for indexer queries and keys and for the compressed KV cache, and BF16 after each step of the indexer score. These roundings matter most where the model makes discrete choices. A score that rounds differently can change which keys the indexer selects or which experts the router picks.
+The released weights are stored in FP8 for the dense layers and FP4 for the experts. The reference code also rounds activations to FP8, FP4 or BF16 at fixed points during inference. These roundings matter most where the model makes discrete choices, because a score that rounds differently can change which keys the indexer keeps or which experts the router picks.
+
+\begin{table}[t]
+\centering
+\small
+\caption{DeepSeek-V4.1-Flash and the target machine.}
+\label{tab:model}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Parameters & 754B in 40 layers, hidden size 5120 \\
+Experts per layer & 384 routed, 6 selected per token, plus 1 shared \\
+Attention & 128-token window and compressed sparse attention \\
+Indexer & 32 heads of dimension 128, keeps 512 positions per query \\
+Candidate selection & 2048 blocks of 8 positions, chosen at layer 20 \\
+Engram & layers 1 and 14, two tables of about 384M rows \\
+Release size & 510\,GB, FP8 dense weights and FP4 experts \\
+\midrule
+Machine & MacBook Air, Apple M4 with a 10-core GPU \\
+Memory & 24\,GB unified, shared by CPU and GPU \\
+Storage & 1\,TB internal SSD, about 3\,GB/s for large reads \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 \subsection{Expert parallelism in the data center}
-DeepInfer \citep{deepinfer}, DeepSeek's inference engine, serves this model on a GPU cluster. Attention runs with data and context parallelism, and the MoE blocks run with expert parallelism (EP). Under EP each GPU stores a subset of the experts. After routing, an all-to-all \emph{dispatch} sends every token's hidden state to the GPUs that hold its experts, and a \emph{combine} step sends the weighted outputs back. DeepSeek uses two more techniques to keep the GPUs busy \citep{deepseekv3}. First, the computation of one micro-batch overlaps with the communication of another, so the all-to-all is hidden. Second, frequently used experts are replicated on several GPUs so that no single GPU becomes a bottleneck. Both techniques need many tokens in flight at the same time.
+DeepInfer \citep{deepinfer}, DeepSeek's inference engine, serves this model on a GPU cluster with expert parallelism. Each GPU stores a subset of the experts. After routing, an all-to-all \emph{dispatch} sends every token's hidden state to the GPUs that hold its experts, and a \emph{combine} step returns the weighted results. DeepSeek uses two further techniques to keep the GPUs busy \citep{deepseekv3}. The computation of one micro-batch overlaps with the communication of another, which hides the all-to-all, and frequently used experts are copied to several GPUs, which spreads the load. Both techniques rely on having many tokens in flight at once.
 
 \subsection{Why a laptop might be enough}
-Our target is a MacBook Air with an M4 chip and 24\,GB of unified memory, shared by the CPU and the GPU (about 120\,GB/s). After conversion (Section~\ref{sec:impl}) the model takes 338\,GB, far more than the memory. However, a single token needs much less than that:
-\begin{itemize}
-  \item The dense part (attention, shared experts, routers, mixers and Engram projections) takes 7.6\,GB at 8 bits per weight.
-  \item The routed experts that one token uses take about 3.3\,GB: 40 layers times 6 experts, at 12--19\,MB per expert after compression to 2--4 bits.
-\end{itemize}
-The internal SSD reads 2.6--3.0\,GB/s. If the dense part stays in memory and about half of the needed experts are already cached, each token needs roughly 1.8\,GB from the SSD. That is about 0.6\,s of reading, so about one token per second looks possible.
+The converted model is more than ten times larger than the laptop's memory, but one decoding step touches far less. The dense part of the model fits in about a third of the memory. The experts that a single token needs add up to a few gigabytes, and if half of them are already cached, the SSD has to deliver less than two gigabytes per token. At the drive's speed, that is well under a second. A token per second therefore looks reachable, provided that the dense weights stay resident, reads go straight into GPU memory, and the cache gets every byte that is left.
 
-This view treats the SSD as the device that holds the experts, the role that other GPUs play under EP. It raises the question this paper studies: \emph{which parts of expert parallelism still help when there is one GPU, one SSD and one sequence?}
+Seen this way, the SSD takes the place that other GPUs hold under expert parallelism. This raises the question we study in the rest of the paper: \emph{which parts of expert parallelism still help when there is one GPU, one SSD and one sequence?}

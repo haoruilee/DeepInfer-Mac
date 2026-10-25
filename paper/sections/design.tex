@@ -1,20 +1,20 @@
 \section{Design}
 \label{sec:design}
-Figure~\ref{fig:overview} shows the design. Dense weights stay in memory. Experts stay on the SSD, and the engine reads the ones it needs into GPU buffers. Table~\ref{tab:mapping} lists how each part of expert parallelism maps to our setting. We describe the expert path (\S\ref{sec:fetch}) and its critical path (\S\ref{sec:chain}), then the two mechanisms that shorten it: idle-window speculation, which is new (\S\ref{sec:spec}), and an expert cache that plays the role of expert replication (\S\ref{sec:replication}).
+Figure~\ref{fig:overview} gives the overall design, and Table~\ref{tab:mapping} lists how each part of expert parallelism carries over. This section first describes how an expert travels from the SSD to the GPU. It then follows one decoding token through a layer to find where time is lost, and ends with the two mechanisms that win it back: idle-window speculation, which is new, and an expert cache that takes the place of expert replication.
 
 \begin{table}[t]
 \centering
 \small
-\caption{Expert parallelism (EP) on a GPU cluster and the corresponding mechanism in \method{}.}
+\caption{Expert parallelism on a GPU cluster and the corresponding mechanism in \method{}.}
 \label{tab:mapping}
 \begin{tabular}{@{}p{0.25\linewidth}p{0.31\linewidth}p{0.37\linewidth}@{}}
 \toprule
-& EP on a cluster & \method{} \\
+& Expert parallelism on a cluster & \method{} \\
 \midrule
-Where experts are stored & GPU memory of many devices & SSD records (208\,GB) \\
-After routing & dispatch tokens (all-to-all) & read missing experts (\texttt{preadv}, no copy) \\
+Where experts are stored & GPU memory of many devices & records on the SSD \\
+After routing & dispatch tokens to experts & read missing experts into GPU buffers \\
 Expert computation & grouped GEMM on each GPU & one \texttt{gather\_qmm} over buffer slots \\
-Hiding transfers & overlap two micro-batches & compute cached experts during reads \\
+Hiding transfers & overlap two micro-batches & read ahead while the GPU computes \\
 Load balancing & replicate hot experts & LRU expert cache in unified memory \\
 \bottomrule
 \end{tabular}
@@ -22,51 +22,42 @@ Load balancing & replicate hot experts & LRU expert cache in unified memory \\
 
 \subsection{Reading experts instead of sending tokens}
 \label{sec:fetch}
-Under EP, tokens travel to the experts. On a laptop the token is already next to the GPU, so we move the expert instead.
+In a cluster, tokens travel to the experts. On a laptop the token already sits next to the only GPU, so the expert has to travel instead, and every copy along the way costs memory that the cache could use.
 
-\paragraph{Records and slabs.} We store each expert as one record on the SSD, aligned to 16\,KiB. A record holds the packed weights, scales and biases of the expert's three projections, in the same layout that MLX \citep{mlx} uses for quantized tensors. For each precision layout, the engine allocates a \emph{slab} at start-up: three GPU arrays of shape $[S,\cdot,\cdot]$, where slot $s$ holds one expert. On a cache miss, the engine takes a free slot and issues a single \texttt{preadv} call whose buffers point into the three arrays at that slot. Because the CPU and GPU share memory, the GPU reads the data exactly where the SSD wrote it, with no extra copy. We open the files with \texttt{F\_NOCACHE} so that macOS does not keep another copy in its page cache.
+\paragraph{Records and slabs.} Each expert is stored on the SSD as one page-aligned record that holds the packed weights, scales and biases of its three projections, laid out exactly as MLX \citep{mlx} lays out quantized tensors in memory. At start-up the engine allocates a \emph{slab} for each precision layout: three GPU arrays whose leading dimension indexes slots, one expert per slot. On a cache miss the engine claims a free slot and issues a single \texttt{preadv} call whose buffers point into the three arrays at that slot. Because CPU and GPU share memory, the GPU later reads the bytes exactly where the SSD put them. The files are opened with \texttt{F\_NOCACHE}, so macOS does not keep a second copy in its page cache.
 
-\paragraph{One matmul per projection.} When the router of a layer finishes, the host reads the selected expert ids. This is the only CPU--GPU synchronization in a layer. The engine maps each expert to its slot and pins the slot until the layer is done. All (token, expert) pairs of the layer then run through one \texttt{gather\_qmm} call per projection, indexed by slot, with SwiGLU and the routing weights fused into the same compiled function. This step plays the role of the combine step, without any communication.
+\paragraph{One matmul per projection.} When the router of a layer has finished, the host reads the chosen expert ids. This is the only point in a layer where the CPU waits for the GPU. The engine maps each expert to its slot and pins the slot until the layer is done. All token-expert pairs of the layer then go through one \texttt{gather\_qmm} call per projection, with the activation function and the routing weights fused into the same compiled function. This step plays the part of the combine step in a cluster, without any communication.
 
 \subsection{The critical path of one token}
 \label{sec:chain}
-A cluster serves many sequences, so while one micro-batch waits for the network another one computes. A laptop usually decodes one sequence, one token at a time. Figure~\ref{fig:timeline} shows what happens in four consecutive layers. The GPU first runs attention, the mixers and the router. Only then does the host know which experts are needed, and the missing ones go to the SSD. Eight I/O threads issue the reads, which finish after 10--30\,ms. The GPU then computes the experts, and the next layer can start only after that. As a result, the GPU and the SSD are rarely busy at the same time.
+Figure~\ref{fig:timeline}a shows four consecutive layers of a real decoding step. The GPU first runs attention and the router. Only then does the host know which experts the token needs, so only then can the missing ones be requested from the SSD. The GPU computes the experts once they have arrived, and the next layer cannot begin before that. The GPU and the SSD therefore take turns, and each spends much of the step waiting for the other.
 
 \begin{figure}[t]
 \centering
 \includegraphics[width=\linewidth]{figures/timeline.pdf}
-\caption{Measured timeline of four decode layers with a 5\,GB expert cache. Gray: attention, mixers and router. Blue: expert computation (cached experts first, then the missing ones). Orange: demand reads, one row per I/O thread. Green: speculative reads (\S\ref{sec:spec}). (a) Reads start only after the router of their layer finishes, and the SSD is idle while the GPU works. (b) With idle-window speculation, guesses for the next layer fill this idle time; several experts of each layer are already in memory when the router finishes. Each panel shows the median of three traced tokens. To time GPU work we synchronize after each expert group, which makes a step 2\% (a) and 14\% (b) slower than untraced decoding in the same run.}
+\caption{Measured timeline of four decode layers with a 5\,GB expert cache. Gray bars are attention and routing, blue bars are expert computation, orange bars are demand reads and green bars are speculative reads, one row per I/O thread. In (a) the reads of a layer start only after its router finishes, and the SSD is idle while the GPU works. In (b) idle-window speculation reads guesses for the next layer during that idle time, so several of its experts are already in memory when its router finishes. Each panel shows the median of three traced tokens. Timing the GPU work requires a synchronization after each expert group, which slows the traced steps by 2\% in (a) and 14\% in (b).}
 \label{fig:timeline}
 \end{figure}
 
-This dependency gives a simple cost model. Let $a$ be the time of attention, mixers and router in one layer, $c$ the expert computation time, $m_\ell$ the number of missing experts in layer $\ell$, $b$ the size of one expert and $B$ the SSD bandwidth. A decode step then takes about
+This chain suggests a simple cost model. Let $a$ be the time a layer spends on attention and routing, $c$ the time spent computing experts, $m_\ell$ the number of experts missing in layer $\ell$, $b$ the size of one expert and $B$ the bandwidth of the SSD. A decoding step then takes about
 \begin{equation}
 t_{\text{token}} \;\approx\; \sum_{\ell=1}^{40}\Big(a + c + \frac{m_\ell\, b}{B}\Big).
 \label{eq:chain}
 \end{equation}
-On an idle machine we measured 0.80\,s per token. The compute terms add up to 0.25\,s. With a 49\% hit rate the missing experts total 1.78\,GB; the measured SSD wait was 0.55\,s, which corresponds to 3.2\,GB/s. These numbers roughly add up to the measured step, and they show three ways to make it shorter. The first is fewer misses, which needs a larger cache (\S\ref{sec:replication}). The second is to overlap the reads of a layer with the computation that does not depend on them; inside one layer, that is only the cached experts. The third is to read experts \emph{before} the router asks for them, so that the SSD also works while the GPU computes (\S\ref{sec:spec}).
-
-Section~\ref{sec:parallel-eval} measures each of these options, together with other kinds of parallelism from related systems.
+On our machine the reading term is about two thirds of a step, so the model points to three ways of making a step shorter. The first is to have fewer misses, which needs a larger cache. The second is to overlap reads with computation that does not depend on them, but inside a layer that is only the computation of already cached experts, which is short. The third is to read experts before the router asks for them, so that the SSD also works while the GPU computes. Section~\ref{sec:parallel-eval} measures each of these options against the others.
 
 \subsection{Idle-window speculation}
 \label{sec:spec}
-Equation~\eqref{eq:chain} also shows when the SSD is idle: during $a$ and $c$, while the GPU runs attention and computes experts. In a decode step this idle time adds up to about 0.25\,s, enough to read about 50 experts. Reading the next layer's experts during this time would take reads off the critical path. Prefetching experts is not new \citep{moeoffload,pregated,moeinfinity,promoe,adapmoe}. In particular, \citet{moeoffload} already guess the next layer's experts by applying its gate to the current hidden state, and we use the same predictor. However, prefetching the most likely next-layer experts made decode 5--6\% \emph{slower} in our measurements. Looking at the trace, we suspected two causes, which the ablation in Section~\ref{sec:parallel-eval} later separated:
-\begin{itemize}
-  \item \textbf{Guesses ran before needed reads.} The engine issued the guesses for layer $\ell+1$ before the misses of layer $\ell$. Both went to the same I/O queue, so every wrong guess delayed a read the token was waiting for.
-  \item \textbf{Guesses might pollute the cache.} A guessed expert entered the LRU list as most recently used, so a wrong guess could push out an expert that had been used. The ablation shows that this effect is small at a 5\,GB cache.
-\end{itemize}
-\emph{Idle-window speculation} addresses both and needs no training or model change. Its essential part is the first: issue guesses only after the demand reads have landed. After the router of layer $\ell$ finishes, the engine also applies the router of layer $\ell+1$ to the current hidden state, using its exact scoring (sqrt-softplus plus bias), and takes the top $k$ experts as guesses. The guesses go to a separate thread that waits until all misses of layer $\ell$ have arrived and only then issues their reads. They therefore run while the GPU computes, in the window where the SSD would otherwise be idle. In addition, a guessed expert is inserted at the \emph{cold} end of the LRU list, the end that is evicted first, similar to low-priority insertion in CPU caches \citep{qureshi2007}. If layer $\ell+1$ uses it, it moves to the hot end; if not, the next guess or miss replaces it before any used expert. A guess never evicts a slot that is pinned or in use by the current request. The change is about 40 lines in the expert store and the MoE block. The ablation in Section~\ref{sec:parallel-eval} shows that the first fix, waiting for the demand reads, provides most of the gain; cold insertion adds a little on top and hurts on its own. Figure~\ref{fig:timeline}b shows the effect: in the same four layers, guessed experts arrive during the GPU's work, and the demand reads that remain are fewer and shorter.
+Equation~\eqref{eq:chain} also shows when the SSD is idle: whenever the GPU runs attention or computes experts. Over a full step this idle time would be enough to read dozens of experts. Prefetching experts is a well-known idea \citep{moeoffload,pregated,moeinfinity,promoe,adapmoe}, and \citet{moeoffload} already guess the next layer's experts by applying that layer's gate to the current hidden state. We used the same predictor, yet our first prefetcher made decode slower. The traces suggested two causes, and our ablation later separated them.
+
+The first cause is ordering. The guesses for the next layer were issued together with the current layer's misses and shared the same I/O queue, so a wrong guess could hold up a read that the token was waiting for. The second possible cause is cache pollution. A guessed expert entered the cache as if it had just been used, so a wrong guess could push out an expert that the model needed again soon.
+
+Idle-window speculation addresses both, and it needs no training and no change to the model. When the router of a layer has finished, the engine also applies the next layer's router, with its exact scoring, to the current hidden state and keeps the top three experts as guesses. A separate thread holds these guesses back until every miss of the current layer has arrived, and only then issues their reads. The guesses therefore travel while the GPU computes, in the window where the SSD would otherwise be idle, and they never stand in front of a needed read. In addition, a guessed expert enters the cache at the end that is evicted first, similar to low-priority insertion in processor caches \citep{qureshi2007}. If the next layer uses it, it moves to the other end like any hit; if not, it is the first entry to go. A guess can never evict an expert that the current layer is using. The whole change is about forty lines in the expert store and the mixture-of-experts block. The ablation in Section~\ref{sec:parallel-eval} shows that waiting for the demand reads provides almost all of the gain, while cold insertion adds only a little. Figure~\ref{fig:timeline}b shows the effect on the same four layers: the guesses arrive while the GPU works, and the demand reads that remain are fewer and shorter.
 
 \subsection{Replication: spending memory on the cache}
 \label{sec:replication}
-Replicating hot experts is the part of EP that transfers most directly. A cluster copies busy experts so that no GPU waits; we keep recently used experts in memory so that no read is needed. Each hit removes one term $b/B$, about 5\,ms, from Equation~\eqref{eq:chain}. We use least-recently-used replacement. On routing traces recorded from the real model, LRU had a higher hit rate than least-frequently-used at the same capacity, and capacity mattered more than the policy: 1.5 times more slots raised the hit rate from 0.38 to 0.47.
+Copying popular experts is the part of expert parallelism that carries over most directly. A cluster replicates experts so that no GPU becomes a bottleneck; we keep recently used experts in memory so that no read is needed at all. Each hit removes one read from the chain in Equation~\eqref{eq:chain}. We use least-recently-used replacement, which beat a frequency-based policy when we replayed routing traces from the real model. The replays also showed that the size of the cache matters much more than the replacement policy.
 
-Because cache size drives decode speed, the rest of the design tries to save memory:
-\begin{itemize}
-  \item Dense FP8 weights convert to MXFP8 without loss (Section~\ref{sec:impl}), so we never keep a higher-precision copy.
-  \item Expert reads skip the page cache, so the same expert is never stored twice.
-  \item Speculative reads enter the cache cold (\S\ref{sec:spec}), and speculative decoding is off by default, so neither pushes useful experts out.
-\end{itemize}
-The cache size is set at start-up from the memory that is free at that moment, minus a 4\,GB margin, and at least 9\,GB always stay free for macOS. With less than that the system starts swapping and decode slows down sharply. On an idle 24\,GB machine this gives 5--6\,GB of expert slots.
+Because the size of the cache governs decode speed, the rest of the design saves memory wherever it can. Dense FP8 weights convert to MLX's MXFP8 format without loss, so no higher-precision copy is kept. Expert reads bypass the page cache, so no expert is stored twice. Speculative reads enter the cache cold, and speculative decoding is off by default, so neither pushes useful experts out. At start-up the cache takes the memory that is free at that moment, minus a safety margin, and it always leaves at least 9\,GB to macOS. Below that, the system starts to swap and every gain is lost.
 
-We also provide an optional approximation based on the same idea. If a missing expert carries less than 8\% of a token's routing weight, the engine skips it and saves the read. It lowers top-1 agreement with the API on open-ended text by 2.4 points. We did not measure its speed effect in an interleaved test, so we report no speed-up for it, and it is off by default.
+The same reasoning motivates an optional approximation. When a missing expert carries only a small share of a token's routing weight, the engine can skip it and save the read. This costs some agreement with the API on open-ended text, so it is off by default, and we did not include it in the speed measurements.
